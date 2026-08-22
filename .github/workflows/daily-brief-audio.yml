@@ -1,0 +1,48 @@
+name: Daily Brief Audio
+
+# Runs HOURLY, not once a day - run.mjs self-gates on the actual work via
+# isTargetHour() (checks real America/New_York local time), so "2am Eastern,
+# pinned year-round" survives the DST transition automatically with zero
+# maintenance, instead of drifting an hour twice a year like a fixed-UTC
+# cron would. Every run outside that hour exits almost immediately.
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch: {}
+
+# Needed to commit the updated manifest.json back to the repo after a
+# real run processes a new Daily Brief - without this the default
+# GITHUB_TOKEN is read-only.
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: Run Daily Brief audio pipeline
+        env:
+          GHOST_API_URL: ${{ secrets.GHOST_API_URL }}
+          GHOST_ADMIN_KEY: ${{ secrets.GHOST_ADMIN_KEY }}
+          GOOGLE_TTS_API_KEY: ${{ secrets.GOOGLE_TTS_API_KEY }}
+        run: node scripts/run.mjs
+
+      # Publishes the manifest so the eir theme's DAILY_BRIEF_MANIFEST_URL
+      # (a raw.githubusercontent.com link, see project notes) reflects any
+      # newly-narrated post from this run. A no-op, harmless commit is
+      # avoided by only committing when manifest.json actually changed.
+      - name: Commit updated manifest.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git diff --cached --quiet || git commit -m "Update manifest.json [skip ci]"
+          git push
