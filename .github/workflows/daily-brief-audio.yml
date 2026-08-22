@@ -8,7 +8,12 @@ name: Daily Brief Audio
 on:
   schedule:
     - cron: "0 * * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force_run:
+        description: "Bypass the 2am-Eastern time gate and process any new Daily Briefs right now (for manual testing)"
+        type: boolean
+        default: false
 
 # Needed to commit the updated manifest.json back to the repo after a
 # real run processes a new Daily Brief - without this the default
@@ -33,6 +38,7 @@ jobs:
           GHOST_API_URL: ${{ secrets.GHOST_API_URL }}
           GHOST_ADMIN_KEY: ${{ secrets.GHOST_ADMIN_KEY }}
           GOOGLE_TTS_API_KEY: ${{ secrets.GOOGLE_TTS_API_KEY }}
+          FORCE_RUN: ${{ inputs.force_run && '1' || '' }}
         run: node scripts/run.mjs
 
       # Publishes the manifest so the eir theme's DAILY_BRIEF_MANIFEST_URL
