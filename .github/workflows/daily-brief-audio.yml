@@ -1,17 +1,25 @@
 name: Daily Brief Audio
 
 # Runs HOURLY, not once a day - run.mjs self-gates on the actual work via
-# isTargetHour() (checks real America/New_York local time), so "2am Eastern,
-# pinned year-round" survives the DST transition automatically with zero
-# maintenance, instead of drifting an hour twice a year like a fixed-UTC
-# cron would. Every run outside that hour exits almost immediately.
+# isTargetHour() (checks real America/New_York local time), so "Eastern
+# time, pinned year-round" survives the DST transition automatically with
+# zero maintenance, instead of drifting an hour twice a year like a
+# fixed-UTC cron would. Every run outside the target hour exits almost
+# immediately.
+#
+# Cron fires at :45 past every hour (not :00) so the trigger that lands
+# inside the target 4am-ET hour (see TARGET_HOUR_ET in run.mjs) sits close
+# to 4:45am ET specifically - Daily Briefs publish ~4:40-4:41am ET, so this
+# leaves a few minutes' margin after publish without needing minute-level
+# precision in the self-gate itself (which would risk skipping a whole day
+# if GitHub's own scheduling jitter pushed a trigger a few minutes late).
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "45 * * * *"
   workflow_dispatch:
     inputs:
       force_run:
-        description: "Bypass the 2am-Eastern time gate and process any new Daily Briefs right now (for manual testing)"
+        description: "Bypass the target-hour time gate and process any new Daily Briefs right now (for manual testing)"
         type: boolean
         default: false
 

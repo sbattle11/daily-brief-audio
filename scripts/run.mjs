@@ -1,8 +1,23 @@
 // Daily entry point. Run on an HOURLY GitHub Actions cron (not a single
 // once-a-day cron) and self-gates on local time - see isTargetHour() below
-// - so "2am Eastern, pinned year-round" survives the DST transition
+// - so "Eastern time, pinned year-round" survives the DST transition
 // automatically with zero maintenance, instead of drifting an hour twice a
 // year like a fixed-UTC cron would.
+//
+// Target hour is 4am ET, not 2am - moved 2026-08-23 after the first real
+// overnight run found nothing to do: Daily Briefs actually publish around
+// 4:40-4:41am ET (confirmed against 3 real posts: 08:40:33 / 08:41:20 /
+// 08:40:25 UTC), so a 2am check always ran BEFORE that day's brief existed
+// and could only ever pick it up the FOLLOWING night - a full day's delay
+// that wasn't the intent. This only checks the HOUR (not the minute) for
+// the same robustness reason as the original design: matching a whole hour
+// (any run landing at 4:00-4:59 ET counts) tolerates GitHub Actions'
+// documented scheduling jitter on cron triggers, whereas an exact-minute
+// match risks silently skipping an entire day if a run happens to land a
+// few minutes outside the target. The workflow's own cron offset (see
+// .github/workflows/daily-brief-audio.yml) is set to land close to 4:45am
+// ET specifically so the actual trigger closest to publish time is the one
+// inside this hour-wide window, without needing minute-level precision here.
 import "dotenv/config";
 import { writeFileSync, mkdtempSync, rmSync } from "fs";
 import path from "path";
@@ -14,7 +29,7 @@ import { stitchAudio } from "./lib/stitch.mjs";
 import { loadManifest, saveManifest } from "./lib/manifest.mjs";
 import { htmlToPlainText } from "./lib/html-to-text.mjs";
 
-const TARGET_HOUR_ET = 2;
+const TARGET_HOUR_ET = 4;
 
 function isTargetHour() {
     const hourInNY = Number(
