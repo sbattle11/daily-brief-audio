@@ -4,15 +4,19 @@ name: Daily Brief Audio
 # isTargetHour() (checks real America/New_York local time), so "Eastern
 # time, pinned year-round" survives the DST transition automatically with
 # zero maintenance, instead of drifting an hour twice a year like a
-# fixed-UTC cron would. Every run outside the target hour exits almost
+# fixed-UTC cron would. Every run outside the target window exits almost
 # immediately.
 #
-# Cron fires at :45 past every hour (not :00) so the trigger that lands
-# inside the target 4am-ET hour (see TARGET_HOUR_ET in run.mjs) sits close
-# to 4:45am ET specifically - Daily Briefs publish ~4:40-4:41am ET, so this
-# leaves a few minutes' margin after publish without needing minute-level
-# precision in the self-gate itself (which would risk skipping a whole day
-# if GitHub's own scheduling jitter pushed a trigger a few minutes late).
+# Cron fires at :45 past every hour (not :00), landing close to shortly
+# after each hour - Daily Briefs publish ~4:40-4:41am ET, so a trigger
+# landing in the 4am-8am ET window (see TARGET_HOUR_START/END_ET in
+# run.mjs) picks it up. That window is intentionally several hours wide,
+# not just the single hour after publish: GitHub Actions' documented
+# scheduling jitter on cron triggers is large enough that it was observed
+# (2026-08-23 and 2026-08-24) hopping clean over a single-hour window two
+# mornings in a row, silently delaying pickup with no run ever attempting
+# the work. A wide window costs nothing extra since the manifest already
+# makes reprocessing idempotent - a run that finds nothing new just exits.
 on:
   schedule:
     - cron: "45 * * * *"

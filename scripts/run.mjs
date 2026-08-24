@@ -4,20 +4,19 @@
 // automatically with zero maintenance, instead of drifting an hour twice a
 // year like a fixed-UTC cron would.
 //
-// Target hour is 4am ET, not 2am - moved 2026-08-23 after the first real
-// overnight run found nothing to do: Daily Briefs actually publish around
-// 4:40-4:41am ET (confirmed against 3 real posts: 08:40:33 / 08:41:20 /
-// 08:40:25 UTC), so a 2am check always ran BEFORE that day's brief existed
-// and could only ever pick it up the FOLLOWING night - a full day's delay
-// that wasn't the intent. This only checks the HOUR (not the minute) for
-// the same robustness reason as the original design: matching a whole hour
-// (any run landing at 4:00-4:59 ET counts) tolerates GitHub Actions'
-// documented scheduling jitter on cron triggers, whereas an exact-minute
-// match risks silently skipping an entire day if a run happens to land a
-// few minutes outside the target. The workflow's own cron offset (see
-// .github/workflows/daily-brief-audio.yml) is set to land close to 4:45am
-// ET specifically so the actual trigger closest to publish time is the one
-// inside this hour-wide window, without needing minute-level precision here.
+// Target window is 4am-8am ET, not a single hour - widened 2026-08-24
+// after a single-hour window (just 4am ET) got silently skipped two
+// mornings in a row: GitHub Actions' scheduling jitter on cron triggers is
+// large enough (observed hopping from 07:47 UTC straight to 09:01 UTC, and
+// separately from 05:56 UTC straight to 09:29 UTC) that it can jump clean
+// over a single target hour, and since every run outside the window exits
+// immediately with no work done, that meant NO run that day ever attempted
+// to process the new brief at all. Daily Briefs actually publish around
+// 4:40-4:41am ET (confirmed against real posts), so a multi-hour window
+// starting there costs nothing extra (the manifest already makes
+// reprocessing idempotent - a run that finds nothing new just exits) while
+// making it overwhelmingly likely at least one run lands inside the
+// window regardless of jitter.
 import "dotenv/config";
 import { writeFileSync, mkdtempSync, rmSync } from "fs";
 import path from "path";
@@ -29,13 +28,14 @@ import { stitchAudio } from "./lib/stitch.mjs";
 import { loadManifest, saveManifest } from "./lib/manifest.mjs";
 import { htmlToPlainText } from "./lib/html-to-text.mjs";
 
-const TARGET_HOUR_ET = 4;
+const TARGET_HOUR_START_ET = 4;
+const TARGET_HOUR_END_ET = 7; // inclusive - so the window is 4:00am-7:59am ET
 
 function isTargetHour() {
     const hourInNY = Number(
         new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }).format(new Date())
     );
-    return hourInNY === TARGET_HOUR_ET;
+    return hourInNY >= TARGET_HOUR_START_ET && hourInNY <= TARGET_HOUR_END_ET;
 }
 
 async function processPost(post, manifest, tmpDir) {
@@ -73,7 +73,7 @@ async function processPost(post, manifest, tmpDir) {
 
 async function main() {
     if (!isTargetHour() && process.env.FORCE_RUN !== "1") {
-        console.log(`Not the target hour (2am America/New_York) - exiting. Set FORCE_RUN=1 to override for testing.`);
+        console.log(`Outside the target window (${TARGET_HOUR_START_ET}am-${TARGET_HOUR_END_ET + 1}am America/New_York) - exiting. Set FORCE_RUN=1 to override for testing.`);
         return;
     }
 
