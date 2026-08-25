@@ -1,3 +1,5 @@
+import { PARA_BREAK_MARKER } from "./html-to-text.mjs";
+
 // Splits article text into pieces small enough for one Google TTS request.
 // Two SEPARATE limits are enforced here, confirmed as genuinely distinct via
 // a live failure: an overall 5,000-BYTE cap per request (documented -
@@ -13,7 +15,25 @@
 // well under that with margin, since Chirp3-HD's actual threshold isn't
 // published anywhere either.
 const MAX_CHUNK_BYTES = 4500; // safety margin under Google's 5000-byte-per-request cap
-const MAX_SENTENCE_CHARS = 250; // safety margin under the observed ~360-char per-sentence failures
+// Raised from 250 to 340, 2026-08-25: a real live Daily Brief sentence at
+// 312 chars (a long quoted rhetorical passage, several clauses joined by
+// commas, no internal period) was getting force-split here even though
+// Google's own synthesis accepted it fine at full length elsewhere - the
+// proactive split converted its commas into hard periods via terminated()
+// below, turning one flowing sentence into five short choppy fragments in a
+// row ("...from every point of the earth. from innocent children to the
+// aged. from individuals to communities. rises toward Heaven."), and that
+// unnatural staccato rhythm is the most likely trigger for a real narration
+// bug: the voice repeated a phrase and inserted a garbled word right at one
+// of those forced boundaries (caught by the user listening, 2026-08-25).
+// 340 clears that specific 312-char sentence while staying under the
+// forum-reported ~360-char failure floor. This value only controls
+// PROACTIVE splitting, done blind before ever calling Google - the REACTIVE
+// synthesizeWithRetry() in tts.mjs (splitting only after an actual
+// rejection) is the real safety net for genuinely-too-long sentences, and
+// doesn't risk this failure mode since it only ever runs when Google has
+// already said no.
+const MAX_SENTENCE_CHARS = 340;
 
 function byteLength(str) {
     return Buffer.byteLength(str, "utf8");
@@ -57,7 +77,6 @@ function splitOnBoundary(text, isBoundaryChar) {
 }
 
 const isSentenceEnd = (ch) => ch === "." || ch === "!" || ch === "?";
-const isClauseBoundary = (ch) => ch === "," || ch === ";" || ch === ":" || ch === "—" || ch === "–";
 
 // Ensures a piece ends with real terminal punctuation. Critical, not
 // cosmetic: pieces get concatenated with plain whitespace when packed into
@@ -80,36 +99,134 @@ function terminated(piece) {
     return piece.trimEnd().replace(/[,;:—–]+$/, "") + ".";
 }
 
-// Breaks one over-length "sentence" (as found by the primary . ! ? split)
-// into pieces Google won't reject, preferring secondary punctuation
-// (comma/semicolon/colon/dash) so the eventual audio still has natural
-// micro-pauses at the split points; falls back to hard word-boundary
-// splitting only if no such punctuation exists at all.
-function splitLongSentence(sentence) {
-    if (sentence.length <= MAX_SENTENCE_CHARS) return [sentence];
+// Priority order for a forced split point inside one over-length sentence,
+// strongest (most natural-sounding) pause first: semicolon, then a real
+// paragraph break (if the marker happens to fall inside this run-on
+// "sentence" - rare, but a stronger, more natural boundary than mere
+// punctuation), then colon, then comma/dash last. Fixed 2026-08-25 after a
+// real narration bug (caught by the user listening): the previous version
+// split at EVERY comma in the whole sentence unconditionally, however many
+// that produced - a single 312-char sentence with 4 commas became 5 short,
+// choppy fragments in a row (each converted to a hard period by
+// terminated() below), and that unnatural staccato rhythm is the likely
+// trigger for the voice repeating a phrase and inserting a garbled word at
+// one of those forced boundaries. Checked one tier at a time (see
+// findBestSplitPoint), stopping at the first tier that has ANY match,
+// rather than fragmenting on the weakest available type everywhere it
+// occurs. Each entry returns the match length at `pos` (0/falsy for no
+// match), so the paragraph-break marker (a multi-character literal) and
+// single-character punctuation share exactly the same search.
+const SPLIT_BOUNDARY_TIERS = [
+    (text, pos) => (text[pos] === ";" ? 1 : 0),
+    (text, pos) => (text.startsWith(PARA_BREAK_MARKER, pos) ? PARA_BREAK_MARKER.length : 0),
+    (text, pos) => (text[pos] === ":" ? 1 : 0),
+    (text, pos) => {
+        const ch = text[pos];
+        if (ch !== "," && ch !== "—" && ch !== "–") return 0;
+        const next = text[pos + 1];
+        if (next !== undefined && !/\s/.test(next)) return 0; // e.g. "3,500" - not a real boundary
+        return 1;
+    },
+];
 
-    const clauses = splitOnBoundary(sentence, isClauseBoundary);
-    const pieces = [];
-    for (const clause of clauses) {
-        if (clause.length <= MAX_SENTENCE_CHARS) {
-            pieces.push(terminated(clause));
-            continue;
+// Finds the occurrence of a candidate boundary nearest the middle of `text`,
+// among positions where `matchLengthAt(text, pos)` reports a real match
+// (returning the match's length, or 0/falsy for no match at that position) -
+// shared by every tier in SPLIT_BOUNDARY_TIERS so all of them use the same
+// "balanced halves, not a lopsided fragment" search. CRITICAL: only accepts
+// a candidate that leaves BOTH sides non-empty (0 < split < text.length) - a
+// candidate sitting at the very start or very end of `text` would make
+// `left` (or `right`) IDENTICAL to `text` itself, and since the caller
+// recurses on both halves, that non-decreasing input previously caused
+// genuine infinite recursion (a real crash, hit live on real Daily Brief
+// content, 2026-08-25: a paragraph-break marker landed at the tail end of an
+// over-length "sentence," so splitting there produced an unchanged `left`
+// and an empty `right` - forever). Rejecting any non-progressing candidate
+// here, at the search level, guarantees every accepted split makes the
+// recursion's input strictly shorter, so it must terminate.
+function nearestMatch(text, matchLengthAt) {
+    const mid = Math.floor(text.length / 2);
+    for (let offset = 0; offset <= text.length; offset++) {
+        for (const pos of [mid + offset, mid - offset]) {
+            if (pos < 0 || pos >= text.length) continue;
+            const len = matchLengthAt(text, pos);
+            if (!len) continue;
+            const splitAt = pos + len;
+            if (splitAt <= 0 || splitAt >= text.length) continue; // would not shrink either side - reject, keep searching
+            return splitAt;
         }
-        // Still too long even at a comma boundary - hard word-boundary split.
-        const words = clause.split(/\s+/);
-        let current = "";
-        for (const word of words) {
-            const candidate = current ? `${current} ${word}` : word;
-            if (candidate.length <= MAX_SENTENCE_CHARS) {
-                current = candidate;
-            } else {
-                if (current) pieces.push(terminated(current));
-                current = word;
-            }
-        }
-        if (current) pieces.push(terminated(current));
     }
+    return -1;
+}
+
+// Finds ONE split point (the index to slice after) for `text`, checking
+// SPLIT_BOUNDARY_TIERS in priority order and, within the winning tier, the
+// occurrence nearest the middle - so a genuinely long sentence gets cut into
+// two roughly balanced halves rather than a lopsided fragment. Returns -1 if
+// nothing at all is usable, so the caller can fall back to a hard
+// word-boundary split.
+function findBestSplitPoint(text) {
+    for (const matchLengthAt of SPLIT_BOUNDARY_TIERS) {
+        const split = nearestMatch(text, matchLengthAt);
+        if (split !== -1) return split;
+    }
+    return -1;
+}
+
+// Hard word-boundary split - last resort, only reached when a sentence has
+// no semicolon, colon, comma, dash, OR paragraph break anywhere to split on
+// at all (effectively never, in real prose).
+function splitOnWordBoundary(sentence) {
+    const words = sentence.split(/\s+/);
+    const pieces = [];
+    let current = "";
+    for (const word of words) {
+        const candidate = current ? `${current} ${word}` : word;
+        if (candidate.length <= MAX_SENTENCE_CHARS) {
+            current = candidate;
+        } else {
+            if (current) pieces.push(terminated(current));
+            current = word;
+        }
+    }
+    if (current) pieces.push(terminated(current));
     return pieces;
+}
+
+// Breaks one over-length "sentence" (as found by the primary . ! ? split)
+// into pieces Google won't reject. Recursive and minimal: makes exactly ONE
+// split at the single best available point (see findBestSplitPoint), then
+// only recurses into a half if THAT half is still too long - so a sentence
+// that only needs one cut gets exactly one, instead of fragmenting at every
+// occurrence of the weakest boundary type up front. terminated() is safe to
+// call unconditionally here (it's a no-op on text that already ends in real
+// .!? punctuation), so the base case doesn't need to track separately
+// whether a given piece came from a forced cut or was already a complete,
+// properly-punctuated sentence.
+// Belt-and-suspenders depth cap, on top of nearestMatch() already rejecting
+// any non-progressing split: 8 levels allows up to 256 pieces, far more than
+// any real sentence should ever need, so hitting this at all would mean
+// some future edge case neither safeguard anticipated - falling back to the
+// word-boundary splitter (which cannot recurse, so cannot loop) rather than
+// crashing the whole run over one unusual sentence.
+const MAX_SPLIT_DEPTH = 8;
+
+function splitLongSentence(sentence, depth = 0) {
+    if (sentence.length <= MAX_SENTENCE_CHARS) return [terminated(sentence)];
+    if (depth >= MAX_SPLIT_DEPTH) return splitOnWordBoundary(sentence);
+
+    const splitAt = findBestSplitPoint(sentence);
+    if (splitAt === -1) return splitOnWordBoundary(sentence);
+
+    // Deliberately NOT trimmed: chunkText() below packs returned pieces back
+    // together with plain concatenation (no separator of its own), relying
+    // on each piece already carrying its own natural leading/trailing
+    // whitespace from the original text - trimming here previously stripped
+    // that and produced runs like "purpose.it contains" with no space at
+    // the seam (caught by testing this fix before shipping it).
+    const left = sentence.slice(0, splitAt);
+    const right = sentence.slice(splitAt);
+    return [...splitLongSentence(left, depth + 1), ...splitLongSentence(right, depth + 1)];
 }
 
 export function chunkText(text) {

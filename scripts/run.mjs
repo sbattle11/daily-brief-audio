@@ -38,7 +38,7 @@ function isTargetHour() {
     return hourInNY >= TARGET_HOUR_START_ET && hourInNY <= TARGET_HOUR_END_ET;
 }
 
-async function processPost(post, manifest, tmpDir) {
+export async function processPost(post, manifest, tmpDir) {
     console.log(`Generating audio for "${post.title}" (${post.id})...`);
     const text = htmlToPlainText(post.html || "");
     const chunks = chunkText(text);
@@ -121,7 +121,21 @@ async function main() {
     }
 }
 
-main().catch((err) => {
-    console.error("FATAL:", err);
-    process.exit(1);
-});
+// Only auto-run when this file is executed directly (the normal scheduled
+// job) - NOT when another script imports processPost() from it (see
+// reprocess-post.mjs), which would otherwise also trigger this module's own
+// main() as an unrelated side effect of the import alone (harmless here
+// since it just logs its target-window gate message and returns, but
+// confusing output for a script that isn't running the scheduled job).
+// pathToFileURL (not manual string-building) handles Windows drive-letter
+// paths correctly - confirmed live that a hand-built "file://" + argv[1]
+// string does NOT match import.meta.url on Windows (missing the extra
+// slash before the drive letter), which silently broke this guard entirely
+// on the first attempt.
+import { pathToFileURL } from "url";
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    main().catch((err) => {
+        console.error("FATAL:", err);
+        process.exit(1);
+    });
+}

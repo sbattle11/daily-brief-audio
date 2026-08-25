@@ -23,7 +23,8 @@ export function htmlToPlainText(html) {
     const withoutToc = stripTableOfContents(html || "");
     const withoutLeadLabel = stripLeadLabel(withoutToc);
     const withoutHeadings = stripSectionHeadings(withoutLeadLabel);
-    const withEmphasisMarked = markEmphasis(withoutHeadings);
+    const withHeadlineBreaks = markHeadlineByline(withoutHeadings);
+    const withEmphasisMarked = markEmphasis(withHeadlineBreaks);
     // Paragraph-break marker inserted on the RAW HTML, targeting </p>
     // specifically, before the generic tag-stripper below turns every tag
     // (this one included) into an undifferentiated single space - that's
@@ -126,6 +127,20 @@ function stripLeadLabel(html) {
 // would destroy both markers it depends on.
 function stripSectionHeadings(html) {
     return html.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, (match, inner) => (/<a[\s>]/i.test(inner) ? match : ""));
+}
+
+// Inserts the same pause used at paragraph breaks between a headline and the
+// byline paragraph immediately following it (user request, 2026-08-25 - the
+// two currently run together with no gap: "...Doesn't Need by Jason Ross").
+// A real headline is always a link-wrapped h2 (see stripSectionHeadings
+// above - same test, reused here since a plain-text h2 is a section label
+// with no byline after it to separate from anyway) immediately followed by
+// the "by {author} (EIRNS) — {date}" paragraph Ghost always renders right
+// after it. MUST run after stripSectionHeadings, for the same reason that
+// function must run after stripTableOfContents - so this only ever sees
+// real headline h2s, not ones about to be stripped.
+function markHeadlineByline(html) {
+    return html.replace(/<h2[^>]*>[\s\S]*?<\/h2>/gi, (match) => (/<a[\s>]/i.test(match) ? `${match} ${PARA_BREAK_MARKER} ` : match));
 }
 
 // Daily Briefs include a "Contents" jump-link block (<h2 id="contents"> ...
