@@ -129,18 +129,28 @@ function stripSectionHeadings(html) {
     return html.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, (match, inner) => (/<a[\s>]/i.test(inner) ? match : ""));
 }
 
-// Inserts the same pause used at paragraph breaks between a headline and the
-// byline paragraph immediately following it (user request, 2026-08-25 - the
-// two currently run together with no gap: "...Doesn't Need by Jason Ross").
-// A real headline is always a link-wrapped h2 (see stripSectionHeadings
-// above - same test, reused here since a plain-text h2 is a section label
-// with no byline after it to separate from anyway) immediately followed by
-// the "by {author} (EIRNS) — {date}" paragraph Ghost always renders right
-// after it. MUST run after stripSectionHeadings, for the same reason that
-// function must run after stripTableOfContents - so this only ever sees
-// real headline h2s, not ones about to be stripped.
+// Separates a headline from the byline paragraph immediately following it
+// (user request, 2026-08-25 - the two currently run together with no gap:
+// "...Doesn't Need by Jason Ross"). A real headline is always a link-wrapped
+// h2 (see stripSectionHeadings above - same test, reused here since a
+// plain-text h2 is a section label with no byline after it to separate from
+// anyway) immediately followed by the "by {author} (EIRNS) — {date}"
+// paragraph Ghost always renders right after it. MUST run after
+// stripSectionHeadings, for the same reason that function must run after
+// stripTableOfContents - so this only ever sees real headline h2s, not ones
+// about to be stripped.
+//
+// A literal period, not a silent SSML <break> (tried first, 2026-08-25):
+// the break alone left the headline with nowhere to resolve its intonation
+// - a title has no terminal punctuation of its own in the source HTML, so
+// without a period the voice had no textual signal that the phrase was
+// actually finished, just a pause stuck in in the middle of what still
+// read as one continuing thought. A real period gives Google's own
+// sentence-boundary handling a genuine sentence to close out (falling
+// intonation) before the byline starts, rather than manufacturing a pause
+// on top of an unfinished-sounding phrase.
 function markHeadlineByline(html) {
-    return html.replace(/<h2[^>]*>[\s\S]*?<\/h2>/gi, (match) => (/<a[\s>]/i.test(match) ? `${match} ${PARA_BREAK_MARKER} ` : match));
+    return html.replace(/<h2[^>]*>[\s\S]*?<\/h2>/gi, (match) => (/<a[\s>]/i.test(match) ? `${match}. ` : match));
 }
 
 // Daily Briefs include a "Contents" jump-link block (<h2 id="contents"> ...
