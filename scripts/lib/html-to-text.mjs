@@ -132,13 +132,26 @@ function stripSectionHeadings(html) {
 // Separates a headline from the byline paragraph immediately following it
 // (user request, 2026-08-25 - the two currently run together with no gap:
 // "...Doesn't Need by Jason Ross"). A real headline is always a link-wrapped
-// h2 (see stripSectionHeadings above - same test, reused here since a
-// plain-text h2 is a section label with no byline after it to separate from
-// anyway) immediately followed by the "by {author} (EIRNS) — {date}"
-// paragraph Ghost always renders right after it. MUST run after
-// stripSectionHeadings, for the same reason that function must run after
-// stripTableOfContents - so this only ever sees real headline h2s, not ones
-// about to be stripped.
+// h2 OR h3 immediately followed by the "by {author} (EIRNS) — {date}"
+// paragraph Ghost always renders right after it.
+//
+// REAL BUG, caught by the user listening (2026-08-26): the first version of
+// this only matched <h2>, on the wrong assumption that every real headline
+// is an h2 (true only of the single "lead" headline at the top of the
+// brief). Every other real per-article headline, inside the "In-Depth"
+// section, is rendered as an <h3> - the category labels above them
+// ("Strategic War Danger" etc, see stripSectionHeadings above) are the
+// plain-text <h2>s. Matching h2 only meant every headline after the first
+// ran straight into its byline with zero separation, every single day
+// since this feature shipped - confirmed by checking the real HTML
+// structure of a live post, not assumed.
+//
+// MUST run after stripSectionHeadings, for the same reason that function
+// must run after stripTableOfContents - so this only ever sees real
+// headline h2/h3s, not the plain-text h2 category labels about to be
+// stripped (h3 has no plain-text-label case at this point in the pipeline
+// to worry about excluding - "The Lead" is the only plain h3, and it's
+// already removed by stripLeadLabel before this runs).
 //
 // A literal period, not a silent SSML <break> (tried first, 2026-08-25):
 // the break alone left the headline with nowhere to resolve its intonation
@@ -150,7 +163,7 @@ function stripSectionHeadings(html) {
 // intonation) before the byline starts, rather than manufacturing a pause
 // on top of an unfinished-sounding phrase.
 function markHeadlineByline(html) {
-    return html.replace(/<h2[^>]*>[\s\S]*?<\/h2>/gi, (match) => (/<a[\s>]/i.test(match) ? `${match}. ` : match));
+    return html.replace(/<h[23][^>]*>[\s\S]*?<\/h[23]>/gi, (match) => (/<a[\s>]/i.test(match) ? `${match}. ` : match));
 }
 
 // Daily Briefs include a "Contents" jump-link block (<h2 id="contents"> ...
