@@ -23,8 +23,14 @@ const DEFAULT_VOICE = { languageCode: "en-US", name: "en-US-Chirp3-HD-Iapetus" }
 // html-to-text.mjs can become a real <break> tag with a precise duration.
 // 750ms was picked as a clearly-longer-than-a-sentence pause without
 // dragging the piece; easy to retune once heard for real.
-import { PARA_BREAK_MARKER, EMPHASIS_START, EMPHASIS_END } from "./html-to-text.mjs";
+import { PARA_BREAK_MARKER, EMPHASIS_START, EMPHASIS_END, LEAD_IN_MARKER } from "./html-to-text.mjs";
 const PARAGRAPH_BREAK_MS = 750;
+
+// Lead-in pause before the very first word of a Daily Brief (user request,
+// 2026-08-26 - a player's own startup/buffering can clip the first
+// fraction of a second, heard as the first word being slightly cut off).
+// 500ms was the user's own suggested "half a second or so"; easy to retune.
+const LEAD_IN_MS = 500;
 
 // Emphasis via a slight slowdown, no pitch shift - the ONLY one of several
 // SSML approaches the user confirmed actually sounded like real emphasis on
@@ -43,7 +49,8 @@ function escapeXml(str) {
 
 function toSsml(text) {
     const escaped = escapeXml(text);
-    const withBreaks = escaped.split(PARA_BREAK_MARKER).join(`<break time="${PARAGRAPH_BREAK_MS}ms"/>`);
+    const withLeadIn = escaped.split(LEAD_IN_MARKER).join(`<break time="${LEAD_IN_MS}ms"/>`);
+    const withBreaks = withLeadIn.split(PARA_BREAK_MARKER).join(`<break time="${PARAGRAPH_BREAK_MS}ms"/>`);
     const withEmphasis = withBreaks
         .split(EMPHASIS_START).join(`<prosody rate="${EMPHASIS_RATE}">`)
         .split(EMPHASIS_END).join("</prosody>");

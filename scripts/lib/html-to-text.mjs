@@ -19,6 +19,17 @@ export const PARA_BREAK_MARKER = "[[PARABREAK]]";
 export const EMPHASIS_START = "[[EMPHSTART]]";
 export const EMPHASIS_END = "[[EMPHEND]]";
 
+// Same pattern again, for a single fixed-duration pause at the very start
+// of the whole audio, before the first word (user request, 2026-08-26): a
+// player's own startup/buffering can clip the first fraction of a second of
+// audio, which reads as the first word getting slightly cut off - a real
+// lead-in pause protects against that regardless of whether the cause is
+// the audio itself or a specific player's startup behavior. Placed at the
+// very front of the text in htmlToPlainText below (always ends up as the
+// first characters of chunk 0, so tts.mjs only ever needs to look for it
+// once per post, not per chunk).
+export const LEAD_IN_MARKER = "[[LEADIN]]";
+
 export function htmlToPlainText(html) {
     const withoutToc = stripTableOfContents(html || "");
     const withoutLeadLabel = stripLeadLabel(withoutToc);
@@ -30,7 +41,7 @@ export function htmlToPlainText(html) {
     // (this one included) into an undifferentiated single space - that's
     // exactly the information this marker exists to preserve.
     const withParaMarkers = withEmphasisMarked.replace(/<\/p>/gi, ` ${PARA_BREAK_MARKER} `);
-    return withParaMarkers
+    const plain = withParaMarkers
         .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, " ")
         .replace(/<[^>]+>/g, " ")
         .replace(/[↓↑→←]/g, " ") // jump-link arrow glyphs (see stripTableOfContents) - pure UI, never real narration content even outside the TOC block itself
@@ -56,6 +67,7 @@ export function htmlToPlainText(html) {
         .replace(/&[a-z#0-9]+;/gi, " ")
         .replace(/\s+/g, " ")
         .trim();
+    return `${LEAD_IN_MARKER} ${plain}`;
 }
 
 // Marks <em> spans worth speaking with real emphasis. Real usage of <em> in
