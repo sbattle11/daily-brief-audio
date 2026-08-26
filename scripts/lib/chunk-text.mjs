@@ -229,17 +229,51 @@ function splitLongSentence(sentence, depth = 0) {
     return [...splitLongSentence(left, depth + 1), ...splitLongSentence(right, depth + 1)];
 }
 
+// Joins two adjacent pieces for the packed request chunks below. Pieces are
+// EXPECTED to already carry their own natural spacing at the seam (a normal
+// sentence boundary's trailing whitespace lands on the START of the next
+// piece - see splitOnBoundary), but this is a real, confirmed second line of
+// defense, not paranoia: splitOnWordBoundary's returned pieces do NOT carry
+// that natural spacing (see its own comment), so without this, two such
+// pieces landing next to each other glue directly together with zero space
+// - caught live, 2026-08-27 (a real Daily Brief quote reassembled as "with
+// the.Vatican", the missing space eaten and a artifact period wedged into
+// the gap by terminated()). Only inserts a space when NEITHER side already
+// has one, so the normal, already-correctly-spaced case is untouched.
+function joinPieces(current, unit) {
+    if (!current) return unit;
+    const needsSpace = !/\s$/.test(current) && !/^\s/.test(unit);
+    return needsSpace ? `${current} ${unit}` : current + unit;
+}
+
 export function chunkText(text) {
     const rawSentences = splitOnBoundary(text, isSentenceEnd);
     // Every unit past this point is guaranteed <= MAX_SENTENCE_CHARS, so the
     // per-sentence failure mode can't recur regardless of how they get
     // packed into byte-sized request chunks below.
-    const units = rawSentences.flatMap(splitLongSentence);
+    //
+    // REAL BUG, confirmed 2026-08-27: this previously called
+    // `rawSentences.flatMap(splitLongSentence)` directly. Array.flatMap
+    // invokes its callback as (element, INDEX, array) - and
+    // splitLongSentence's second parameter is `depth`, defaulting to 0. That
+    // meant every sentence's very first call silently received the
+    // sentence's own ARRAY INDEX as its starting recursion depth instead of
+    // the intended 0 - past MAX_SPLIT_DEPTH (8) for the 9th sentence
+    // onward, which is most of any real Daily Brief. Any over-length
+    // sentence from there on skipped the tiered semicolon/paragraph-break/
+    // colon/comma boundary logic entirely and fell straight to the crude
+    // word-boundary fallback splitter - confirmed live by tracing the exact
+    // same logic called correctly (depth actually 0) vs. through the real
+    // flatMap call on real content: the former reproduced a real user-
+    // reported quote intact, the latter reproduced the exact "the.Vatican"
+    // corruption reported. Wrapping in an arrow function so only the one
+    // intended argument is ever passed.
+    const units = rawSentences.flatMap((sentence) => splitLongSentence(sentence));
 
     const chunks = [];
     let current = "";
     for (const unit of units) {
-        const candidate = current + unit;
+        const candidate = joinPieces(current, unit);
         if (byteLength(candidate) <= MAX_CHUNK_BYTES) {
             current = candidate;
         } else {
