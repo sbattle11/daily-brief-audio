@@ -55,12 +55,16 @@ jobs:
 
       # Publishes the manifest so the eir theme's DAILY_BRIEF_MANIFEST_URL
       # (a raw.githubusercontent.com link, see project notes) reflects any
-      # newly-narrated post from this run. A no-op, harmless commit is
-      # avoided by only committing when manifest.json actually changed.
-      - name: Commit updated manifest.json
+      # newly-narrated post from this run. processed-state.json travels
+      # alongside it - it's what run.mjs actually checks to decide a post is
+      # already done (keyed on published_at, not just post id - see
+      # manifest.mjs), so it has to survive between ephemeral runs same as
+      # manifest.json does. A no-op, harmless commit is avoided by only
+      # committing when something actually changed.
+      - name: Commit updated manifest.json and processed-state.json
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add manifest.json
-          git diff --cached --quiet || git commit -m "Update manifest.json [skip ci]"
+          git add manifest.json processed-state.json
+          git diff --cached --quiet || git commit -m "Update manifest.json / processed-state.json [skip ci]"
           git push

@@ -25,7 +25,7 @@ import { browsePosts, uploadAudio } from "./lib/ghost-admin.mjs";
 import { chunkText } from "./lib/chunk-text.mjs";
 import { synthesizeWithRetry } from "./lib/tts.mjs";
 import { stitchAudio } from "./lib/stitch.mjs";
-import { loadManifest, saveManifest } from "./lib/manifest.mjs";
+import { loadManifest, saveManifest, loadState, saveState } from "./lib/manifest.mjs";
 import { htmlToPlainText } from "./lib/html-to-text.mjs";
 
 const TARGET_HOUR_START_ET = 4;
@@ -38,7 +38,7 @@ function isTargetHour() {
     return hourInNY >= TARGET_HOUR_START_ET && hourInNY <= TARGET_HOUR_END_ET;
 }
 
-export async function processPost(post, manifest, tmpDir) {
+export async function processPost(post, manifest, state, tmpDir) {
     console.log(`Generating audio for "${post.title}" (${post.id})...`);
     const text = htmlToPlainText(post.html || "");
     const chunks = chunkText(text);
@@ -69,6 +69,8 @@ export async function processPost(post, manifest, tmpDir) {
 
     manifest[post.id] = url;
     saveManifest(manifest);
+    state[post.id] = post.published_at;
+    saveState(state);
 }
 
 async function main() {
@@ -78,18 +80,27 @@ async function main() {
     }
 
     const manifest = loadManifest();
+    const state = loadState();
 
     // Rolling 48h lookback rather than "since last run" - matches the
     // eir-algolia-sync project's reasoning: GitHub Actions runners are
     // ephemeral, nothing persists between runs except what's committed
-    // (the manifest itself), so a stateless window that's self-healing on
-    // a missed run beats tracking a separate watermark.
+    // (the manifest/state files themselves), so a stateless window that's
+    // self-healing on a missed run beats tracking a separate watermark.
     const since = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
     const posts = browsePosts({ filter: `tag:daily-brief+published_at:>'${since}'`, formats: "html", order: "published_at ASC" });
 
     const toProcess = [];
     for await (const post of posts) {
-        if (manifest[post.id]) continue; // already has audio - skip (idempotent)
+        // Keyed on published_at, not just post.id: EIR's publishing
+        // workflow periodically edits an already-narrated post in place
+        // into the next day's edition (title/content/published_at all
+        // change, id doesn't) - confirmed happening repeatedly in
+        // production. An id-only check would treat that post as already
+        // done forever and silently narrate stale content, so a post whose
+        // published_at has moved on since its last recorded run is treated
+        // as new work.
+        if (state[post.id] === post.published_at) continue; // already narrated for this exact edition - skip (idempotent)
         toProcess.push(post);
     }
 
@@ -106,7 +117,7 @@ async function main() {
         // posts at once (self-healing rolling window, see above).
         for (const post of toProcess) {
             try {
-                await processPost(post, manifest, tmpDir);
+                await processPost(post, manifest, state, tmpDir);
             } catch (err) {
                 console.error(`  FAILED "${post.title}": ${err.message}`);
                 failures.push(post.title);

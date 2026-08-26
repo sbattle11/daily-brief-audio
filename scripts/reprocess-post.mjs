@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from "fs";
 import path from "path";
 import os from "os";
 import { browsePosts } from "./lib/ghost-admin.mjs";
-import { loadManifest } from "./lib/manifest.mjs";
+import { loadManifest, loadState } from "./lib/manifest.mjs";
 import { processPost } from "./run.mjs";
 
 const postId = process.argv[2];
@@ -26,9 +26,10 @@ if (!post) {
 }
 
 const manifest = loadManifest();
+const state = loadState();
 const tmpDir = mkdtempSync(path.join(os.tmpdir(), "daily-brief-reprocess-"));
 try {
-    await processPost(post, manifest, tmpDir);
+    await processPost(post, manifest, state, tmpDir);
     console.log("Done.");
 } finally {
     rmSync(tmpDir, { recursive: true, force: true });
