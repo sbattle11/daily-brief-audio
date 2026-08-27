@@ -92,12 +92,27 @@ export function htmlToPlainText(html) {
 // trailing comma/semicolon like "other," still counts as a lowercase
 // single word - the punctuation isn't spoken, so including it in the
 // slowed-down span makes no audible difference).
+//
+// Articles excluded, 2026-08-27: a real user-flagged case ("...if not
+// *the* headquarters...") sounded fake/glitchy - confirmed by generating
+// and listening to 5+ real SSML alternatives (rate slowdown - the
+// existing approach, pitch shift alone, volume boost alone, SSML
+// <emphasis> at both strong and moderate levels) against the real
+// sentence AND the full real paragraph for context - none sounded like
+// genuine emphasis on an article specifically. Linguistically this tracks:
+// real spoken emphasis on "the"/"a"/"an" is rare and subtle (mostly via
+// pitch, not the duration-based effect used here), unlike content words
+// (talk, did, real - all confirmed working by ear already), so articles
+// are excluded outright rather than continuing to chase an SSML treatment
+// for them.
+const ARTICLES = new Set(["the", "a", "an"]);
 function markEmphasis(html) {
     return html.replace(/<em>([^<]*)<\/em>/gi, (match, inner) => {
         const trimmed = inner.trim();
         const isSingleWord = trimmed.length > 0 && !/\s/.test(trimmed);
         const startsLowercase = /^[a-z]/.test(trimmed);
-        if (!isSingleWord || !startsLowercase) return match; // leave as plain <em> - generic tag-stripper handles it normally, word stays but unemphasized
+        const isArticle = ARTICLES.has(trimmed.toLowerCase().replace(/[^a-z]/g, ""));
+        if (!isSingleWord || !startsLowercase || isArticle) return match; // leave as plain <em> - generic tag-stripper handles it normally, word stays but unemphasized
         return `${EMPHASIS_START}${trimmed}${EMPHASIS_END}`;
     });
 }
