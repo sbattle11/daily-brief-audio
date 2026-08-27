@@ -39,8 +39,10 @@ export function htmlToPlainText(html) {
     // Paragraph-break marker inserted on the RAW HTML, targeting </p>
     // specifically, before the generic tag-stripper below turns every tag
     // (this one included) into an undifferentiated single space - that's
-    // exactly the information this marker exists to preserve.
-    const withParaMarkers = withEmphasisMarked.replace(/<\/p>/gi, ` ${PARA_BREAK_MARKER} `);
+    // exactly the information this marker exists to preserve. Also ensures
+    // every paragraph ends in real terminal punctuation first - see
+    // ensureParagraphPunctuation() below.
+    const withParaMarkers = ensureParagraphPunctuation(withEmphasisMarked).replace(/<\/p>/gi, ` ${PARA_BREAK_MARKER} `);
     const plain = withParaMarkers
         .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, " ")
         .replace(/<[^>]+>/g, " ")
@@ -68,6 +70,83 @@ export function htmlToPlainText(html) {
         .replace(/\s+/g, " ")
         .trim();
     return `${LEAD_IN_MARKER} ${plain}`;
+}
+
+// Ensures every <p> ends in real terminal punctuation before its paragraph
+// break, inserting a period if it doesn't already have one (user-flagged,
+// 2026-08-27): a recurring feature article ("Next EIR: ...") previews the
+// upcoming print issue's contents as a run of bare, unpunctuated <p> lines
+// ("Section 1. International", "International Peace Coalition, Week 168:
+// Who Is Pushing for Nuclear War?, by Steve Carr", etc.) - real,
+// meaningful content (not the auto-generated jump-link "Contents" block
+// stripTableOfContents already removes), but each line reads as an
+// incomplete fragment without a period, especially the short "Section N."
+// labels. Applied to EVERY paragraph, not just short ones - a paragraph
+// that already sounds fine isn't hurt by a trailing period, and a blanket
+// rule is simpler and more robust than guessing a length threshold for
+// which lines "need" one.
+//
+// Hand-written scan-then-build, not a single regex .replace() - this
+// codebase has a documented history of regex text-boundary bugs (see the
+// chunk-text.mjs flatMap/.match() bugs elsewhere in this project). A plain
+// `.replace(/<\/p>/, callback)` can't correctly do this: the callback can
+// only rewrite the matched "</p>" itself, so trying to re-emit earlier
+// content (to place a period BEFORE a trailing closing tag like </em>)
+// ends up DUPLICATING that tag instead of moving the period before it -
+// confirmed by testing a real byline case before shipping this version.
+// Scanning first (recording where each period needs to go) then building
+// the final string in one left-to-right pass avoids that entirely.
+//
+// The backward walk from each </p> needs to correctly see PAST trailing
+// inline closing tags (a byline paragraph ending "<em>...2026</em></p>"
+// must be checked against "2026", not the "</em>" tag) and past trailing
+// closing quotes/parens (a paragraph ending ...War?"</p> is already
+// terminated by the "?" underneath the closing curly quote, and should
+// NOT get a second period after it).
+function ensureParagraphPunctuation(html) {
+    const insertPositions = [];
+    const closeTagRe = /<\/p>/gi;
+    let m;
+    while ((m = closeTagRe.exec(html))) {
+        const offset = m.index;
+        let i = offset - 1;
+        while (i >= 0) {
+            if (/\s/.test(html[i])) {
+                i--;
+                continue;
+            }
+            if (html[i] === ">") {
+                const tagStart = html.lastIndexOf("<", i);
+                if (tagStart === -1) break;
+                const tag = html.slice(tagStart, i + 1);
+                if (/^<\/[a-z]/i.test(tag)) {
+                    // A closing inline tag (</em>, </a>, ...) - hop past it
+                    // to check the real text it wraps, not the tag itself.
+                    i = tagStart - 1;
+                    continue;
+                }
+                break; // an opening/self-closing tag right before </p> - nothing to punctuate
+            }
+            break;
+        }
+        if (i < 0) continue; // empty paragraph, nothing to punctuate
+
+        let j = i;
+        while (j >= 0 && /["'”’)\]]/.test(html[j])) j--;
+        const alreadyTerminated = j >= 0 && /[.!?…]/.test(html[j]);
+        if (!alreadyTerminated) insertPositions.push(i + 1);
+    }
+
+    if (insertPositions.length === 0) return html;
+
+    let result = "";
+    let last = 0;
+    for (const pos of insertPositions) {
+        result += html.slice(last, pos) + ".";
+        last = pos;
+    }
+    result += html.slice(last);
+    return result;
 }
 
 // Marks <em> spans worth speaking with real emphasis. Real usage of <em> in
