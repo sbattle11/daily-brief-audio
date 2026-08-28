@@ -1,25 +1,29 @@
 name: Daily Brief Audio
 
-# Runs HOURLY, not once a day - run.mjs self-gates on the actual work via
-# isTargetHour() (checks real America/New_York local time), so "Eastern
-# time, pinned year-round" survives the DST transition automatically with
-# zero maintenance, instead of drifting an hour twice a year like a
-# fixed-UTC cron would. Every run outside the target window exits almost
-# immediately.
+# Runs every 15 minutes, ALL DAY (not scoped to any UTC hour range) -
+# run.mjs self-gates on the actual work via isTargetWindow() (checks real
+# America/New_York local time), so "Eastern time, pinned year-round"
+# survives the DST transition automatically with zero maintenance, instead
+# of drifting an hour twice a year like a fixed-UTC cron window would.
+# Every run outside the target window exits almost immediately (a few
+# seconds), so running all day costs nothing meaningful.
 #
-# Cron fires at :45 past every hour (not :00), landing close to shortly
-# after each hour - Daily Briefs publish ~4:40-4:41am ET, so a trigger
-# landing in the 4am-8am ET window (see TARGET_HOUR_START/END_ET in
-# run.mjs) picks it up. That window is intentionally several hours wide,
-# not just the single hour after publish: GitHub Actions' documented
-# scheduling jitter on cron triggers is large enough that it was observed
-# (2026-08-23 and 2026-08-24) hopping clean over a single-hour window two
-# mornings in a row, silently delaying pickup with no run ever attempting
-# the work. A wide window costs nothing extra since the manifest already
-# makes reprocessing idempotent - a run that finds nothing new just exits.
+# Changed from hourly (at :45) to every 15 minutes on 2026-08-28, after the
+# same silent-skip failure mode recurred yet again (2026-08-27, 2026-08-28,
+# on top of 2026-08-23/24 which is why the window was widened to 4am-8am ET
+# in the first place) - confirmed via the GitHub Actions API that these are
+# genuinely zero attempted runs, not failures, with the workflow's own
+# state/concurrency/quota all checked and ruled out as a cause. This is
+# GitHub's own scheduler dropping ticks. A 15-minute cadence means a
+# dropped tick has 15-minute-wide neighbors instead of hour-wide ones,
+# meaningfully improving the odds at least one lands. The target window
+# itself (see TARGET_START/END_MINUTES_ET in run.mjs) now starts at 4:45am
+# ET instead of 4:00am, matching real observed publish time (~4:40-4:41am
+# ET) - purely to skip pointless early no-op ticks, not a reliability
+# change.
 on:
   schedule:
-    - cron: "45 * * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       force_run:

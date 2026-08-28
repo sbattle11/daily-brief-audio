@@ -1,22 +1,26 @@
-// Daily entry point. Run on an HOURLY GitHub Actions cron (not a single
-// once-a-day cron) and self-gates on local time - see isTargetHour() below
-// - so "Eastern time, pinned year-round" survives the DST transition
-// automatically with zero maintenance, instead of drifting an hour twice a
-// year like a fixed-UTC cron would.
+// Daily entry point. Run on a cron firing every 15 minutes, all day (not
+// scoped to any particular UTC hour range) and self-gates on local time -
+// see isTargetWindow() below - so "Eastern time, pinned year-round"
+// survives the DST transition automatically with zero maintenance, instead
+// of drifting an hour twice a year like a fixed-UTC cron window would.
 //
-// Target window is 4am-8am ET, not a single hour - widened 2026-08-24
-// after a single-hour window (just 4am ET) got silently skipped two
-// mornings in a row: GitHub Actions' scheduling jitter on cron triggers is
-// large enough (observed hopping from 07:47 UTC straight to 09:01 UTC, and
-// separately from 05:56 UTC straight to 09:29 UTC) that it can jump clean
-// over a single target hour, and since every run outside the window exits
-// immediately with no work done, that meant NO run that day ever attempted
-// to process the new brief at all. Daily Briefs actually publish around
-// 4:40-4:41am ET (confirmed against real posts), so a multi-hour window
-// starting there costs nothing extra (the manifest already makes
-// reprocessing idempotent - a run that finds nothing new just exits) while
-// making it overwhelmingly likely at least one run lands inside the
-// window regardless of jitter.
+// Target window is 4:45am-8am ET. Originally just a single hour (4am ET),
+// then widened to 4am-8am ET 2026-08-24 after that single-hour window got
+// silently skipped two mornings in a row (2026-08-23, 2026-08-24) - and
+// even with that wider window and an hourly cron, the same silent-skip
+// pattern recurred again on 2026-08-27 and 2026-08-28 (confirmed via the
+// GitHub Actions API: zero runs attempted in the gap, not failed ones, and
+// the workflow's own state/concurrency/quota were all checked and ruled
+// out as a cause - this is GitHub's own scheduler dropping ticks, not
+// something wrong in this repo). Fix this time: the cron itself now fires
+// every 15 minutes all day (see the workflow YAML) instead of once an
+// hour, so a dropped tick has 15-minute-wide neighbors to fall back on
+// instead of hour-wide ones. The lower bound was moved from 4:00am to
+// 4:45am (Daily Briefs actually publish around 4:40-4:41am ET, confirmed
+// against real posts - no need to check before that) purely to skip
+// pointless early no-op ticks; it does not affect reliability either way,
+// since a run that finds nothing new just exits (the manifest already
+// makes reprocessing idempotent).
 import "dotenv/config";
 import { writeFileSync, mkdtempSync, rmSync } from "fs";
 import path from "path";
@@ -28,14 +32,20 @@ import { stitchAudio } from "./lib/stitch.mjs";
 import { loadManifest, saveManifest, loadState, saveState } from "./lib/manifest.mjs";
 import { htmlToPlainText } from "./lib/html-to-text.mjs";
 
-const TARGET_HOUR_START_ET = 4;
-const TARGET_HOUR_END_ET = 7; // inclusive - so the window is 4:00am-7:59am ET
+const TARGET_START_MINUTES_ET = 4 * 60 + 45; // 4:45am
+const TARGET_END_MINUTES_ET = 8 * 60; // exclusive - so the window is 4:45am-7:59am ET
 
-function isTargetHour() {
-    const hourInNY = Number(
-        new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }).format(new Date())
-    );
-    return hourInNY >= TARGET_HOUR_START_ET && hourInNY <= TARGET_HOUR_END_ET;
+function isTargetWindow() {
+    const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York",
+        hour: "numeric",
+        minute: "numeric",
+        hour12: false,
+    }).formatToParts(new Date());
+    const hour = Number(parts.find((p) => p.type === "hour").value);
+    const minute = Number(parts.find((p) => p.type === "minute").value);
+    const minutesInNY = hour * 60 + minute;
+    return minutesInNY >= TARGET_START_MINUTES_ET && minutesInNY < TARGET_END_MINUTES_ET;
 }
 
 export async function processPost(post, manifest, state, tmpDir) {
@@ -74,8 +84,8 @@ export async function processPost(post, manifest, state, tmpDir) {
 }
 
 async function main() {
-    if (!isTargetHour() && process.env.FORCE_RUN !== "1") {
-        console.log(`Outside the target window (${TARGET_HOUR_START_ET}am-${TARGET_HOUR_END_ET + 1}am America/New_York) - exiting. Set FORCE_RUN=1 to override for testing.`);
+    if (!isTargetWindow() && process.env.FORCE_RUN !== "1") {
+        console.log(`Outside the target window (4:45am-8:00am America/New_York) - exiting. Set FORCE_RUN=1 to override for testing.`);
         return;
     }
 
