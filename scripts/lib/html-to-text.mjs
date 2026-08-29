@@ -56,14 +56,27 @@ export function htmlToPlainText(html) {
         // during the quoted material to signal the end, rather than a
         // second spoken marker. No comma after "quote" itself either (no
         // pause between the word and the quoted text starting).
-        // DOUBLE curly quotes only (“ ”), not single (‘ ’): confirmed by
-        // counting real usage across 5 real Daily Briefs that ’ is
-        // overwhelmingly the possessive/contraction apostrophe ("LaRouche's"),
-        // not a closing quote mark (255 total ’ characters, only ~21 were
-        // real paired single-quotes) - marking nested quotes-within-quotes
-        // isn't attempted, since it's not reliably distinguishable from an
-        // ordinary possessive.
+        // DOUBLE curly quotes only (“ ”), not single (‘ ’), get the spoken
+        // "quote" cue: confirmed by counting real usage across 5 real Daily
+        // Briefs that ’ is overwhelmingly the possessive/contraction
+        // apostrophe ("LaRouche's"), not a closing quote mark (255 total ’
+        // characters, only ~21 were real paired single-quotes) - so ’ alone
+        // isn't a reliable anchor for anything.
         .replace(/“/g, "quote “")
+        // Single-quoted scare-quote phrases ('stabilization forces',
+        // 'Emergency Declaration') get an unwanted, distracting emphasis
+        // from Google's own TTS engine when the wrapping quote marks are
+        // left in (user-flagged, 2026-08-29) - strip just the two wrapping
+        // marks, leaving the phrase itself untouched. Safe and reliable
+        // here even though ’ alone is ambiguous (see above): the OPENING
+        // mark ‘ is never used as an apostrophe in real content (confirmed
+        // across the same 5 Daily Briefs - only ever opens a quoted
+        // phrase), so anchoring on a real ‘...’ pair and only removing
+        // those two characters can't touch an apostrophe/possessive
+        // anywhere, including one that happens to sit inside the quoted
+        // phrase itself (e.g. ‘the people’s voice’ keeps its own
+        // apostrophe - only the outer wrapping marks are removed).
+        .replace(/‘([^‘’]*)’/g, "$1")
         .replace(/&nbsp;/g, " ")
         .replace(/&amp;/g, "&")
         .replace(/&[a-z#0-9]+;/gi, " ")
