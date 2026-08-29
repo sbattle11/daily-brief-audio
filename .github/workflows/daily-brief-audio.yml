@@ -69,10 +69,24 @@ jobs:
       # nothing else here needs to change for it to be reachable once
       # pushed. A no-op, harmless commit is avoided by only committing when
       # something actually changed.
+      #
+      # REAL BUG, hit in production 2026-08-29 (first tick after chapters.json
+      # was introduced): `git add` treats ANY nonexistent pathspec as fatal
+      # for the WHOLE command ("fatal: pathspec 'chapters.json' did not match
+      # any files", exit 128) - confirmed locally before this fix. Since
+      # chapters.json is only ever created on disk the first time
+      # processPost() actually runs (never by this workflow file itself), it
+      # doesn't exist yet in a fresh checkout until that happens, which broke
+      # EVERY run outside the target window (i.e. the vast majority of the
+      # day's ticks) even though there was nothing to commit either way.
+      # Fixed by adding it separately, tolerating its absence - manifest.json
+      # and processed-state.json are committed to the repo already and will
+      # always exist, so they don't need the same guard.
       - name: Commit updated manifest.json, chapters.json, and processed-state.json
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add manifest.json chapters.json processed-state.json
+          git add manifest.json processed-state.json
+          if [ -f chapters.json ]; then git add chapters.json; fi
           git diff --cached --quiet || git commit -m "Update manifest.json / chapters.json / processed-state.json [skip ci]"
           git push
