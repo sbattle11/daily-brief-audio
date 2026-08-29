@@ -30,11 +30,47 @@ export const EMPHASIS_END = "[[EMPHEND]]";
 // once per post, not per chunk).
 export const LEAD_IN_MARKER = "[[LEADIN]]";
 
-export function htmlToPlainText(html) {
+// Splits a Daily Brief's raw HTML into one HTML fragment per real article
+// (added 2026-08-29, for the between-article transition-sound feature -
+// see stitch.mjs/run.mjs). Runs the same three cleanup passes
+// htmlToPlainText already ran first (TOC, "The Lead" label, section-group
+// headings) - after those, EVERY remaining <h2>/<h3> is a genuine,
+// link-wrapped article headline (see stripSectionHeadings/markHeadlineByline
+// docs below for why that invariant holds), so splitting the cleaned HTML
+// at each one is exactly "split into articles." Each fragment starts with
+// its own headline and runs up to (not including) the next one, or the end
+// of the document for the last article.
+export function splitIntoArticles(html) {
     const withoutToc = stripTableOfContents(html || "");
     const withoutLeadLabel = stripLeadLabel(withoutToc);
-    const withoutHeadings = stripSectionHeadings(withoutLeadLabel);
-    const withHeadlineBreaks = markHeadlineByline(withoutHeadings);
+    const cleaned = stripSectionHeadings(withoutLeadLabel);
+
+    const headlineRe = /<h[23][^>]*>[\s\S]*?<\/h[23]>/gi;
+    const starts = [];
+    let m;
+    while ((m = headlineRe.exec(cleaned))) {
+        starts.push(m.index);
+    }
+    // Defensive fallback, not expected in real content: no real headline
+    // found at all (e.g. a malformed post) - treat the whole thing as a
+    // single article rather than silently dropping content.
+    if (starts.length === 0) return [cleaned];
+
+    const articles = [];
+    for (let i = 0; i < starts.length; i++) {
+        const end = i + 1 < starts.length ? starts[i + 1] : cleaned.length;
+        articles.push(cleaned.slice(starts[i], end));
+    }
+    return articles;
+}
+
+// Converts ONE already-split article's HTML fragment (see splitIntoArticles
+// above) into plain narration text. Does NOT re-run stripTableOfContents/
+// stripLeadLabel/stripSectionHeadings - splitIntoArticles already ran those
+// on the whole post before splitting, and running stripSectionHeadings again
+// per-fragment would be harmless but pointless (nothing left to strip).
+export function articleHtmlToPlainText(articleHtml) {
+    const withHeadlineBreaks = markHeadlineByline(articleHtml);
     const withEmphasisMarked = markEmphasis(withHeadlineBreaks);
     // Paragraph-break marker inserted on the RAW HTML, targeting </p>
     // specifically, before the generic tag-stripper below turns every tag
@@ -43,7 +79,7 @@ export function htmlToPlainText(html) {
     // every paragraph ends in real terminal punctuation first - see
     // ensureParagraphPunctuation() below.
     const withParaMarkers = ensureParagraphPunctuation(withEmphasisMarked).replace(/<\/p>/gi, ` ${PARA_BREAK_MARKER} `);
-    const plain = withParaMarkers
+    return withParaMarkers
         .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, " ")
         .replace(/<[^>]+>/g, " ")
         .replace(/[↓↑→←]/g, " ") // jump-link arrow glyphs (see stripTableOfContents) - pure UI, never real narration content even outside the TOC block itself
@@ -82,7 +118,17 @@ export function htmlToPlainText(html) {
         .replace(/&[a-z#0-9]+;/gi, " ")
         .replace(/\s+/g, " ")
         .trim();
-    return `${LEAD_IN_MARKER} ${plain}`;
+}
+
+// Whole-post plain text, unsplit - kept for test-connection.mjs's rough
+// length check, NOT used by the live pipeline anymore (run.mjs processes
+// each article separately now, see splitIntoArticles/articleHtmlToPlainText
+// above, so the between-article transition sound has real audio-file
+// boundaries to splice into). LEAD_IN_MARKER goes on the very front only,
+// once, matching its original single-post-wide meaning.
+export function htmlToPlainText(html) {
+    const articles = splitIntoArticles(html).map(articleHtmlToPlainText);
+    return `${LEAD_IN_MARKER} ${articles.join(" ")}`;
 }
 
 // Ensures every <p> ends in real terminal punctuation before its paragraph

@@ -30,7 +30,31 @@ import { chunkText } from "./lib/chunk-text.mjs";
 import { synthesizeWithRetry } from "./lib/tts.mjs";
 import { stitchAudio } from "./lib/stitch.mjs";
 import { loadManifest, saveManifest, loadState, saveState } from "./lib/manifest.mjs";
-import { htmlToPlainText } from "./lib/html-to-text.mjs";
+import { splitIntoArticles, articleHtmlToPlainText, LEAD_IN_MARKER } from "./lib/html-to-text.mjs";
+
+// Fixed sound assets (added 2026-08-29, user request) - both pre-converted
+// to Google TTS's own real output format (24kHz mono MP3, confirmed via a
+// live sample) so they splice into the concat list in stitch.mjs cleanly
+// via stream-copy, with no re-encoding step needed anywhere in the
+// pipeline. See assets/ for the originals' provenance.
+const TRANSITION_SOUND_PATH = path.join(import.meta.dirname, "..", "assets", "transition.mp3");
+const OUTRO_SOUND_PATH = path.join(import.meta.dirname, "..", "assets", "outro.mp3");
+
+// "EIR Daily Alert for <full date>" spoken intro (user request, 2026-08-29)
+// - full month/day/year, not the site's own no-year kicker convention
+// (user's explicit choice - this is a standalone spoken announcement, not
+// a webpage UI label sitting next to other dated content). Uses the POST's
+// own published_at, not "today" - the 48h rolling lookback window (see
+// main() below) can process more than one post's edition in a single run,
+// each potentially a different calendar date.
+function formatIntroDate(publishedAtIso) {
+    return new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York",
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+    }).format(new Date(publishedAtIso));
+}
 
 const TARGET_START_MINUTES_ET = 4 * 60 + 45; // 4:45am
 const TARGET_END_MINUTES_ET = 8 * 60; // exclusive - so the window is 4:45am-7:59am ET
@@ -50,28 +74,57 @@ function isTargetWindow() {
 
 export async function processPost(post, manifest, state, tmpDir) {
     console.log(`Generating audio for "${post.title}" (${post.id})...`);
-    const text = htmlToPlainText(post.html || "");
-    const chunks = chunkText(text);
-    console.log(`  ${text.length} chars -> ${chunks.length} chunk(s)`);
 
-    const chunkPaths = [];
+    const articles = splitIntoArticles(post.html || "");
+    console.log(`  ${articles.length} article(s) found`);
+
+    const allPaths = [];
     let fileIndex = 0;
-    for (const chunk of chunks) {
-        // Usually one buffer per chunk; more than one only if
-        // synthesizeWithRetry had to split this chunk further after Google
-        // rejected it (see tts.mjs) - either way, each buffer becomes its
-        // own numbered file in the correct left-to-right order for stitching.
-        const audioBuffers = await synthesizeWithRetry(chunk);
-        for (const audio of audioBuffers) {
-            const chunkPath = path.join(tmpDir, `chunk-${fileIndex}.mp3`);
-            writeFileSync(chunkPath, audio);
-            chunkPaths.push(chunkPath);
-            fileIndex++;
+
+    // Shared by the intro line and every article below - chunks arbitrary
+    // text via the existing, unmodified chunkText()/synthesizeWithRetry()
+    // and appends each resulting audio file to the single flat path list
+    // stitchAudio() concatenates at the end. Keeping this one shared helper
+    // (rather than a separate code path for the intro) means the intro line
+    // gets exactly the same chunking/retry-on-failure safety net as any
+    // other text, even though in practice it's always one short sentence.
+    async function synthesizeToFiles(text) {
+        const chunks = chunkText(text);
+        for (const chunk of chunks) {
+            // Usually one buffer per chunk; more than one only if
+            // synthesizeWithRetry had to split this chunk further after
+            // Google rejected it (see tts.mjs) - either way, each buffer
+            // becomes its own numbered file in the correct left-to-right
+            // order for stitching.
+            const audioBuffers = await synthesizeWithRetry(chunk);
+            for (const audio of audioBuffers) {
+                const chunkPath = path.join(tmpDir, `chunk-${fileIndex}.mp3`);
+                writeFileSync(chunkPath, audio);
+                allPaths.push(chunkPath);
+                fileIndex++;
+            }
         }
     }
 
+    // Intro: spoken date announcement. Carries LEAD_IN_MARKER itself now
+    // (moved here from html-to-text.mjs's old whole-post htmlToPlainText -
+    // the intro, not the first article, is the true start of the audio now,
+    // so that's where the player-startup-clipping protection belongs).
+    const introDate = formatIntroDate(post.published_at);
+    await synthesizeToFiles(`${LEAD_IN_MARKER} EIR Daily Alert for ${introDate}.`);
+
+    // Transition sound strictly BETWEEN articles (user request, 2026-08-29)
+    // - never before the first or after the last, since the spoken intro
+    // and the outro sound already bookend those.
+    for (let i = 0; i < articles.length; i++) {
+        if (i > 0) allPaths.push(TRANSITION_SOUND_PATH);
+        await synthesizeToFiles(articleHtmlToPlainText(articles[i]));
+    }
+
+    allPaths.push(OUTRO_SOUND_PATH);
+
     const stitchedPath = path.join(tmpDir, "stitched.mp3");
-    await stitchAudio(chunkPaths, stitchedPath);
+    await stitchAudio(allPaths, stitchedPath);
 
     const filename = `daily-brief-${post.slug}.mp3`;
     const url = await uploadAudio(stitchedPath, filename);
