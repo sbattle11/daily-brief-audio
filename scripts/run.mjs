@@ -30,7 +30,9 @@ import { chunkText } from "./lib/chunk-text.mjs";
 import { synthesizeWithRetry } from "./lib/tts.mjs";
 import { stitchAudio } from "./lib/stitch.mjs";
 import { loadManifest, saveManifest, loadState, saveState } from "./lib/manifest.mjs";
+import { loadChapters, saveChapters } from "./lib/chapters.mjs";
 import { splitIntoArticles, articleHtmlToPlainText, LEAD_IN_MARKER } from "./lib/html-to-text.mjs";
+import { getAudioDuration } from "./lib/audio-duration.mjs";
 
 // Fixed sound assets (added 2026-08-29, user request) - both pre-converted
 // to Google TTS's own real output format (24kHz mono MP3, confirmed via a
@@ -72,7 +74,7 @@ function isTargetWindow() {
     return minutesInNY >= TARGET_START_MINUTES_ET && minutesInNY < TARGET_END_MINUTES_ET;
 }
 
-export async function processPost(post, manifest, state, tmpDir) {
+export async function processPost(post, manifest, chapters, state, tmpDir) {
     console.log(`Generating audio for "${post.title}" (${post.id})...`);
 
     const articles = splitIntoArticles(post.html || "");
@@ -80,6 +82,20 @@ export async function processPost(post, manifest, state, tmpDir) {
 
     const allPaths = [];
     let fileIndex = 0;
+    // Running total of everything appended so far, in seconds - lets each
+    // article's start-time offset in the FINAL stitched file be recorded as
+    // it's reached, instead of re-deriving it afterward from the finished
+    // file (chapter-navigation feature, user request 2026-08-29: "next
+    // article"/"previous article" buttons need real timestamps to jump to).
+    // Measuring every piece as it's added (a TTS chunk or a fixed sound
+    // asset) with the same getAudioDuration() rather than assuming a fixed
+    // duration for the sound assets keeps this correct even if
+    // transition.mp3/outro.mp3 are ever swapped for a different-length file.
+    let elapsedSeconds = 0;
+    async function addPath(filePath) {
+        allPaths.push(filePath);
+        elapsedSeconds += await getAudioDuration(filePath);
+    }
 
     // Shared by the intro line and every article below - chunks arbitrary
     // text via the existing, unmodified chunkText()/synthesizeWithRetry()
@@ -100,7 +116,7 @@ export async function processPost(post, manifest, state, tmpDir) {
             for (const audio of audioBuffers) {
                 const chunkPath = path.join(tmpDir, `chunk-${fileIndex}.mp3`);
                 writeFileSync(chunkPath, audio);
-                allPaths.push(chunkPath);
+                await addPath(chunkPath);
                 fileIndex++;
             }
         }
@@ -115,13 +131,20 @@ export async function processPost(post, manifest, state, tmpDir) {
 
     // Transition sound strictly BETWEEN articles (user request, 2026-08-29)
     // - never before the first or after the last, since the spoken intro
-    // and the outro sound already bookend those.
+    // and the outro sound already bookend those. splitIntoArticles has
+    // already stripped the "Contents" jump-link block and the plain-text
+    // section-group headings ("In-Depth" etc.) before this point (see its
+    // own doc comment in html-to-text.mjs), so `articles` here only ever
+    // contains real per-article fragments - chapterSeconds below is safe to
+    // treat as "one entry per real article" with nothing to skip.
+    const chapterSeconds = [];
     for (let i = 0; i < articles.length; i++) {
-        if (i > 0) allPaths.push(TRANSITION_SOUND_PATH);
+        if (i > 0) await addPath(TRANSITION_SOUND_PATH);
+        chapterSeconds.push(elapsedSeconds); // this article's own start time, before its audio is appended
         await synthesizeToFiles(articleHtmlToPlainText(articles[i]));
     }
 
-    allPaths.push(OUTRO_SOUND_PATH);
+    await addPath(OUTRO_SOUND_PATH);
 
     const stitchedPath = path.join(tmpDir, "stitched.mp3");
     await stitchAudio(allPaths, stitchedPath);
@@ -132,6 +155,16 @@ export async function processPost(post, manifest, state, tmpDir) {
 
     manifest[post.id] = url;
     saveManifest(manifest);
+    // Kept in a separate file (chapters.json), never folded into
+    // manifest.json - manifest.json is deliberately kept as a plain
+    // {postId: url} map the theme reads directly as such (see manifest.mjs's
+    // own doc comment), so adding a wholly new file for this is lower-risk
+    // than changing that established, working contract: the theme's
+    // existing manifest fetch/parse code needs zero changes either way, and
+    // a post narrated before this feature shipped just has no entry here
+    // (frontend treats that as "no chapters available", not an error).
+    chapters[post.id] = chapterSeconds;
+    saveChapters(chapters);
     state[post.id] = post.published_at;
     saveState(state);
 }
@@ -143,6 +176,7 @@ async function main() {
     }
 
     const manifest = loadManifest();
+    const chapters = loadChapters();
     const state = loadState();
 
     // Rolling 48h lookback rather than "since last run" - matches the
@@ -180,7 +214,7 @@ async function main() {
         // posts at once (self-healing rolling window, see above).
         for (const post of toProcess) {
             try {
-                await processPost(post, manifest, state, tmpDir);
+                await processPost(post, manifest, chapters, state, tmpDir);
             } catch (err) {
                 console.error(`  FAILED "${post.title}": ${err.message}`);
                 failures.push(post.title);

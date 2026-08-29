@@ -63,12 +63,16 @@ jobs:
       # alongside it - it's what run.mjs actually checks to decide a post is
       # already done (keyed on published_at, not just post id - see
       # manifest.mjs), so it has to survive between ephemeral runs same as
-      # manifest.json does. A no-op, harmless commit is avoided by only
-      # committing when something actually changed.
-      - name: Commit updated manifest.json and processed-state.json
+      # manifest.json does. chapters.json added 2026-08-29 (chapter-
+      # navigation feature) - the theme derives its URL from
+      # DAILY_BRIEF_MANIFEST_URL itself (swaps the filename client-side), so
+      # nothing else here needs to change for it to be reachable once
+      # pushed. A no-op, harmless commit is avoided by only committing when
+      # something actually changed.
+      - name: Commit updated manifest.json, chapters.json, and processed-state.json
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add manifest.json processed-state.json
-          git diff --cached --quiet || git commit -m "Update manifest.json / processed-state.json [skip ci]"
+          git add manifest.json chapters.json processed-state.json
+          git diff --cached --quiet || git commit -m "Update manifest.json / chapters.json / processed-state.json [skip ci]"
           git push
