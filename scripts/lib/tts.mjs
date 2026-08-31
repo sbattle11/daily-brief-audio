@@ -23,7 +23,7 @@ const DEFAULT_VOICE = { languageCode: "en-US", name: "en-US-Chirp3-HD-Iapetus" }
 // html-to-text.mjs can become a real <break> tag with a precise duration.
 // 750ms was picked as a clearly-longer-than-a-sentence pause without
 // dragging the piece; easy to retune once heard for real.
-import { PARA_BREAK_MARKER, EMPHASIS_START, EMPHASIS_END, LEAD_IN_MARKER } from "./html-to-text.mjs";
+import { PARA_BREAK_MARKER, EMPHASIS_START, EMPHASIS_END, LEAD_IN_MARKER, ABBREV_START, ABBREV_END } from "./html-to-text.mjs";
 const PARAGRAPH_BREAK_MS = 750;
 
 // Lead-in pause before the very first word of a Daily Brief (user request,
@@ -47,6 +47,29 @@ function escapeXml(str) {
     return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+// Multi-letter periods-abbreviations ("U.S.", "U.K.", "U.N.") - see
+// ABBREV_START/ABBREV_END's own doc comment in html-to-text.mjs for the
+// chunk-text.mjs-splitting problem this solves. `characters` interpretation
+// tells Google to spell the enclosed text out letter-by-letter, which is
+// also just the correct/natural pronunciation for an initialism like this
+// (a native speaker says "U.S." as the letters "U" "S", not as a word) -
+// this is CANDIDATE, not yet confirmed by ear on this specific voice
+// (Chirp3-HD has a real history in this project of some SSML tags sounding
+// "odd" despite the API accepting them without error - <emphasis>, pitch
+// <prosody> - see EMPHASIS_RATE's own history above), so verify with a real
+// short sample before relying on this in the live pipeline.
+function toSayAs(abbrev) {
+    return `<say-as interpret-as="characters">${abbrev}</say-as>`;
+}
+
+// ABBREV_START/END contain literal "[" "]" characters (regex metachars) -
+// escaped here rather than built into a template-literal RegExp directly,
+// which would otherwise silently misinterpret them as a character class.
+function escapeRegex(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+const ABBREV_RE = new RegExp(`${escapeRegex(ABBREV_START)}(.*?)${escapeRegex(ABBREV_END)}`, "g");
+
 function toSsml(text) {
     const escaped = escapeXml(text);
     const withLeadIn = escaped.split(LEAD_IN_MARKER).join(`<break time="${LEAD_IN_MS}ms"/>`);
@@ -54,7 +77,8 @@ function toSsml(text) {
     const withEmphasis = withBreaks
         .split(EMPHASIS_START).join(`<prosody rate="${EMPHASIS_RATE}">`)
         .split(EMPHASIS_END).join("</prosody>");
-    return `<speak>${withEmphasis}</speak>`;
+    const withAbbrevs = withEmphasis.replace(ABBREV_RE, (_, abbrev) => toSayAs(abbrev));
+    return `<speak>${withAbbrevs}</speak>`;
 }
 
 export async function synthesizeChunk(text) {

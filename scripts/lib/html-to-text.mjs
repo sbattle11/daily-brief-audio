@@ -30,6 +30,33 @@ export const EMPHASIS_END = "[[EMPHEND]]";
 // once per post, not per chunk).
 export const LEAD_IN_MARKER = "[[LEADIN]]";
 
+// Wraps a multi-letter periods-abbreviation ("U.S.", "U.K.", "U.N.", "J.F.K.")
+// so it survives chunk-text.mjs's sentence-boundary splitter intact (user
+// request, 2026-08-31 - "U.S." specifically was getting misread as ending a
+// sentence). Root cause, confirmed by re-reading chunk-text.mjs's own
+// splitOnBoundary(): a period only counts as a sentence boundary there when
+// the VERY NEXT character is whitespace (or end-of-string) - which is
+// exactly what happens after "U.S." in real prose ("the U.S. Congress..."),
+// so its trailing period is genuinely indistinguishable from a real
+// sentence-ending one under that rule. Rather than special-casing this in
+// chunk-text.mjs (already hardened, don't want to touch it), wrapping the
+// WHOLE abbreviation here - before it ever reaches the chunker - means its
+// trailing period is followed by ABBREV_END's own "[" instead of
+// whitespace, so the existing, unmodified splitOnBoundary logic already
+// treats it as non-terminal, the same way "U.K."'s FIRST period (followed
+// immediately by "K") already does today. tts.mjs converts the wrapped span
+// into SSML <say-as interpret-as="characters"> so Google's own prosody
+// engine doesn't treat the enclosed periods as sentence-ending either, while
+// still pronouncing it correctly (spelling out the letters is the natural
+// pronunciation for an initialism like this anyway). Genuinely
+// sentence-final "U.S." (rare, but real - "...allied with the U.S. They
+// then...") is NOT specifically handled here and doesn't need to be: the
+// marker only protects the abbreviation's OWN span, so whatever comes after
+// it is still parsed completely normally by both the chunker and Google's
+// prosody engine, exactly as if the abbreviation weren't there at all.
+export const ABBREV_START = "[[ABBRSTART]]";
+export const ABBREV_END = "[[ABBREND]]";
+
 // Splits a Daily Brief's raw HTML into one HTML fragment per real article
 // (added 2026-08-29, for the between-article transition-sound feature -
 // see stitch.mjs/run.mjs). Runs the same three cleanup passes
@@ -84,6 +111,16 @@ export function articleHtmlToPlainText(articleHtml) {
         .replace(/<[^>]+>/g, " ")
         .replace(/[↓↑→←]/g, " ") // jump-link arrow glyphs (see stripTableOfContents) - pure UI, never real narration content even outside the TOC block itself
         .replace(/\(EIRNS\)/g, "") // wire-service byline marker ("by Jason Ross (EIRNS) — Aug. 21, 2026") - confirmed present in every byline across every Daily Brief checked, an editorial/production artifact with no narration value, not part of the actual sentence
+        // Raw URLs that slip into body text by editorial mistake (user
+        // request, 2026-08-31) - a real link (<a href>) never reaches this
+        // point at all, since the generic tag-stripper above already
+        // discarded the href and kept only the link's own visible text; this
+        // only catches a URL typed/pasted directly as plain paragraph text,
+        // which would otherwise get read aloud character-by-character.
+        // Scoped to protocol-prefixed URLs specifically (user confirmed
+        // 2026-08-31: only the long http(s):// ones are the actual problem,
+        // other cases are fine to leave as-is).
+        .replace(/\bhttps?:\/\/\S+/gi, "")
         // Speaks direct quotes aloud as "quote ..." - TTS otherwise gives a
         // listener no audible signal that a quotation has started. "quote"
         // only, NO "unquote" at the close (user's explicit decision,
@@ -116,6 +153,16 @@ export function articleHtmlToPlainText(articleHtml) {
         .replace(/&nbsp;/g, " ")
         .replace(/&amp;/g, "&")
         .replace(/&[a-z#0-9]+;/gi, " ")
+        // Multi-letter periods-abbreviations ("U.S.", "U.K.", "U.N.",
+        // "J.F.K.") - see ABBREV_START/ABBREV_END's own doc comment above
+        // for why wrapping (not stripping/reformatting) is the fix. Two or
+        // more consecutive single-capital-letter-periods with no space
+        // between them, e.g. "U.S." = "U." + "S." - deliberately general
+        // rather than hardcoded to "U.S." specifically, since this is a
+        // recurring house-style pattern, not a one-off. A single "A." (a
+        // list-item label, one repetition) does NOT match {2,} and is left
+        // alone, same for a lone trailing initial like "Malcolm X."
+        .replace(/\b(?:[A-Z]\.){2,}/g, (match) => `${ABBREV_START}${match}${ABBREV_END}`)
         .replace(/\s+/g, " ")
         .trim();
 }
