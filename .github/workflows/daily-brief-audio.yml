@@ -22,16 +22,13 @@ name: Daily Brief Audio
 # ET) - purely to skip pointless early no-op ticks, not a reliability
 # change.
 on:
-  # PAUSED 2026-08-30 at the user's request, pending a Google Cloud
-  # billing/quota review (a "your account will be suspended" notification
-  # came in - unclear yet whether that's the always-free per-API character
-  # quota or the separate $300/90-day trial credit running out, which would
-  # need a different fix). Scheduled runs are fully disabled; manual
-  # workflow_dispatch still works below if a specific post needs
-  # processing while this is paused. To resume: uncomment the schedule
-  # block below and push.
-  # schedule:
-  #   - cron: "*/15 * * * *"
+  # RESUMED 2026-08-31 - was paused 2026-08-30 pending a Google Cloud
+  # billing/quota review ("your account will be suspended" notification);
+  # user resolved the underlying Google Cloud account issue and asked to
+  # turn scheduled runs back on, effective starting tomorrow's target
+  # window (today's post was deliberately not backfilled/re-run).
+  schedule:
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       force_run:
