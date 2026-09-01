@@ -91,6 +91,33 @@ export function splitIntoArticles(html) {
     return articles;
 }
 
+// Removes the byline/dateline paragraph from an already-split article
+// fragment (user request, 2026-09-01) - run.mjs calls this for every
+// SUPPORTING article in a brief (index > 0 in splitIntoArticles' result),
+// keeping it only on the lead article at the top. Repeating "by {author} —
+// {date}" after every single headline through a whole brief was flagged as
+// redundant and unnecessary once there are several of them in a row.
+//
+// Identified purely by POSITION, not by pattern-matching its content
+// ("by ... (EIRNS) ... —" or similar): Ghost always renders the byline as
+// the very first <p> immediately after the headline's closing tag, with
+// nothing in between - the same structural guarantee markHeadlineByline
+// already relies on - confirmed directly against real per-article HTML
+// fragments (both the lead h2 and every supporting h3 checked). Matching
+// on position instead of wording is deliberately more robust against real
+// byline variation (single vs. multiple authors, "(EIRNS)" present or not,
+// date formatting) than trying to recognize the phrase itself would be.
+export function stripByline(articleHtml) {
+    const headlineClose = articleHtml.match(/<\/h[23]>/i);
+    if (!headlineClose) return articleHtml; // no real headline found - leave as-is, nothing safe to strip
+    const afterHeadline = headlineClose.index + headlineClose[0].length;
+    const bylineMatch = articleHtml.slice(afterHeadline).match(/^\s*<p[^>]*>[\s\S]*?<\/p>/i);
+    if (!bylineMatch) return articleHtml; // no immediately-following <p> - nothing to strip
+    const bylineStart = afterHeadline + bylineMatch.index;
+    const bylineEnd = bylineStart + bylineMatch[0].length;
+    return articleHtml.slice(0, bylineStart) + articleHtml.slice(bylineEnd);
+}
+
 // Converts ONE already-split article's HTML fragment (see splitIntoArticles
 // above) into plain narration text. Does NOT re-run stripTableOfContents/
 // stripLeadLabel/stripSectionHeadings - splitIntoArticles already ran those

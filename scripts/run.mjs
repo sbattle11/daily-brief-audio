@@ -31,7 +31,7 @@ import { synthesizeWithRetry } from "./lib/tts.mjs";
 import { stitchAudio } from "./lib/stitch.mjs";
 import { loadManifest, saveManifest, loadState, saveState } from "./lib/manifest.mjs";
 import { loadChapters, saveChapters } from "./lib/chapters.mjs";
-import { splitIntoArticles, articleHtmlToPlainText, LEAD_IN_MARKER } from "./lib/html-to-text.mjs";
+import { splitIntoArticles, articleHtmlToPlainText, stripByline, LEAD_IN_MARKER } from "./lib/html-to-text.mjs";
 import { getAudioDuration } from "./lib/audio-duration.mjs";
 
 // Fixed sound assets (added 2026-08-29, user request) - both pre-converted
@@ -141,7 +141,13 @@ export async function processPost(post, manifest, chapters, state, tmpDir) {
     for (let i = 0; i < articles.length; i++) {
         if (i > 0) await addPath(TRANSITION_SOUND_PATH);
         chapterSeconds.push(elapsedSeconds); // this article's own start time, before its audio is appended
-        await synthesizeToFiles(articleHtmlToPlainText(articles[i]));
+        // Byline/dateline kept only on the lead article (i === 0); every
+        // supporting article has it stripped (user request, 2026-09-01) -
+        // repeating "by {author} — {date}" after every headline through a
+        // whole brief was flagged as redundant. See stripByline's own doc
+        // comment in html-to-text.mjs.
+        const withoutByline = i === 0 ? articles[i] : stripByline(articles[i]);
+        await synthesizeToFiles(articleHtmlToPlainText(withoutByline));
     }
 
     await addPath(OUTRO_SOUND_PATH);
