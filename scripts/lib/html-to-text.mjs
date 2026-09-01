@@ -195,64 +195,77 @@ export function htmlToPlainText(html) {
 // Hand-written scan-then-build, not a single regex .replace() - this
 // codebase has a documented history of regex text-boundary bugs (see the
 // chunk-text.mjs flatMap/.match() bugs elsewhere in this project). A plain
-// `.replace(/<\/p>/, callback)` can't correctly do this: the callback can
-// only rewrite the matched "</p>" itself, so trying to re-emit earlier
+// `.replace(/<\/tag>/, callback)` can't correctly do this: the callback can
+// only rewrite the matched closing tag itself, so trying to re-emit earlier
 // content (to place a period BEFORE a trailing closing tag like </em>)
 // ends up DUPLICATING that tag instead of moving the period before it -
 // confirmed by testing a real byline case before shipping this version.
 // Scanning first (recording where each period needs to go) then building
 // the final string in one left-to-right pass avoids that entirely.
 //
-// The backward walk from each </p> needs to correctly see PAST trailing
-// inline closing tags (a byline paragraph ending "<em>...2026</em></p>"
-// must be checked against "2026", not the "</em>" tag) and past trailing
-// closing quotes/parens (a paragraph ending ...War?"</p> is already
-// terminated by the "?" underneath the closing curly quote, and should
-// NOT get a second period after it).
+// Shared by ensureParagraphPunctuation (walking back from each </p>) and
+// markHeadlineByline (walking back from each </h2>/</h3>) - both need the
+// exact same walk: past trailing whitespace, past trailing inline closing
+// tags (a byline paragraph ending "<em>...2026</em></p>" must be checked
+// against "2026", not the "</em>" tag; a headline ending "...War</a></h2>"
+// must be checked against "War", not the "</a>" tag), and past trailing
+// closing quotes/parens (content ending ...War?"</p> is already terminated
+// by the "?" underneath the closing curly quote, and shouldn't get a second
+// period). `boundStart` keeps the walk from wandering past the start of the
+// element being punctuated (its own opening tag) into a PRECEDING element -
+// only matters for an empty/tag-only element, but cheap to guard regardless.
+// Returns the offset to insert a period at, or null if there's nothing to
+// punctuate (empty content) or it's already terminated.
+function findPunctuationInsertOffset(html, closeTagStart, boundStart) {
+    let i = closeTagStart - 1;
+    while (i >= boundStart) {
+        if (/\s/.test(html[i])) {
+            i--;
+            continue;
+        }
+        if (html[i] === ">") {
+            const tagStart = html.lastIndexOf("<", i);
+            if (tagStart === -1 || tagStart < boundStart) break;
+            const tag = html.slice(tagStart, i + 1);
+            if (/^<\/[a-z]/i.test(tag)) {
+                // A closing inline tag (</em>, </a>, ...) - hop past it to
+                // check the real text it wraps, not the tag itself.
+                i = tagStart - 1;
+                continue;
+            }
+            break; // an opening/self-closing tag right before - nothing to punctuate
+        }
+        break;
+    }
+    if (i < boundStart) return null; // empty content, nothing to punctuate
+
+    let j = i;
+    while (j >= boundStart && /["'”’)\]]/.test(html[j])) j--;
+    const alreadyTerminated = j >= boundStart && /[.!?…]/.test(html[j]);
+    return alreadyTerminated ? null : i + 1;
+}
+
+function insertCharsAt(html, positions, char) {
+    if (positions.length === 0) return html;
+    let result = "";
+    let last = 0;
+    for (const pos of positions) {
+        result += html.slice(last, pos) + char;
+        last = pos;
+    }
+    result += html.slice(last);
+    return result;
+}
+
 function ensureParagraphPunctuation(html) {
     const insertPositions = [];
     const closeTagRe = /<\/p>/gi;
     let m;
     while ((m = closeTagRe.exec(html))) {
-        const offset = m.index;
-        let i = offset - 1;
-        while (i >= 0) {
-            if (/\s/.test(html[i])) {
-                i--;
-                continue;
-            }
-            if (html[i] === ">") {
-                const tagStart = html.lastIndexOf("<", i);
-                if (tagStart === -1) break;
-                const tag = html.slice(tagStart, i + 1);
-                if (/^<\/[a-z]/i.test(tag)) {
-                    // A closing inline tag (</em>, </a>, ...) - hop past it
-                    // to check the real text it wraps, not the tag itself.
-                    i = tagStart - 1;
-                    continue;
-                }
-                break; // an opening/self-closing tag right before </p> - nothing to punctuate
-            }
-            break;
-        }
-        if (i < 0) continue; // empty paragraph, nothing to punctuate
-
-        let j = i;
-        while (j >= 0 && /["'”’)\]]/.test(html[j])) j--;
-        const alreadyTerminated = j >= 0 && /[.!?…]/.test(html[j]);
-        if (!alreadyTerminated) insertPositions.push(i + 1);
+        const offset = findPunctuationInsertOffset(html, m.index, 0);
+        if (offset !== null) insertPositions.push(offset);
     }
-
-    if (insertPositions.length === 0) return html;
-
-    let result = "";
-    let last = 0;
-    for (const pos of insertPositions) {
-        result += html.slice(last, pos) + ".";
-        last = pos;
-    }
-    result += html.slice(last);
-    return result;
+    return insertCharsAt(html, insertPositions, ".");
 }
 
 // Marks <em> spans worth speaking with real emphasis. Real usage of <em> in
@@ -374,8 +387,39 @@ function stripSectionHeadings(html) {
 // sentence-boundary handling a genuine sentence to close out (falling
 // intonation) before the byline starts, rather than manufacturing a pause
 // on top of an unfinished-sounding phrase.
+//
+// REAL BUG, caught by the user listening (2026-09-01, across multiple
+// headlines throughout a brief, not just the lead) - the original version
+// appended ". " AFTER THE WHOLE MATCHED "<h2>...</h2>" BLOCK, not after the
+// headline's own text. Once the generic tag-stripper later turns "</h2>"
+// into a plain space, that ordering survives into the final string as
+// "War" + " "(from the stripped </h2>) + ". " = "War . " - a period
+// floating a space away from the word it's supposed to terminate, not
+// attached to it the way real sentence-ending punctuation ever is in
+// natural prose. Confirmed directly: articleHtmlToPlainText() on a real
+// brief produced the literal substring "Nuclear War . by Dennis Small" for
+// every single headline, lead and every supporting In-Depth article alike
+// (the regex below is global and runs against every h2/h3 in the post) -
+// not something Chirp3-HD's sentence-boundary/prosody handling treats the
+// same as a normal trailing period, plausibly exactly the "straining"
+// through title into byline the user was hearing. Fixed the same way
+// ensureParagraphPunctuation already had to be fixed for the identical
+// class of problem (see findPunctuationInsertOffset's doc comment above,
+// and its own note about why a plain .replace() callback can't do this) -
+// walk back from </h2>/</h3> to the real text underneath, past any
+// trailing </a>, and insert the period there instead of after the tag.
 function markHeadlineByline(html) {
-    return html.replace(/<h[23][^>]*>[\s\S]*?<\/h[23]>/gi, (match) => (/<a[\s>]/i.test(match) ? `${match}. ` : match));
+    const insertPositions = [];
+    const headlineRe = /<h[23][^>]*>[\s\S]*?<\/h[23]>/gi;
+    let m;
+    while ((m = headlineRe.exec(html))) {
+        const match = m[0];
+        if (!/<a[\s>]/i.test(match)) continue;
+        const closeTagStart = m.index + match.search(/<\/h[23]>/i);
+        const offset = findPunctuationInsertOffset(html, closeTagStart, m.index);
+        if (offset !== null) insertPositions.push(offset);
+    }
+    return insertCharsAt(html, insertPositions, ".");
 }
 
 // Daily Briefs include a "Contents" jump-link block (<h2 id="contents"> ...
