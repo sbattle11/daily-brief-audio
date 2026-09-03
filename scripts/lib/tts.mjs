@@ -10,11 +10,14 @@ const ENDPOINT = "https://texttospeech.googleapis.com/v1/text:synthesize";
 // quality step up (per Google's own docs, adds natural intonation/emotional
 // range that Neural2/WaveNet don't) - confirmed GA (not allowlisted) and
 // confirmed to support the plain synchronous text:synthesize call this
-// script uses (not streaming-only). "Iapetus" (male) is the user's chosen
-// voice, picked after listening to real generated samples of several
-// Chirp3-HD options (see docs.cloud.google.com/text-to-speech/docs/
-// list-voices-and-types for the full voice list, ~30 options).
-const DEFAULT_VOICE = { languageCode: "en-US", name: "en-US-Chirp3-HD-Iapetus" };
+// script uses (not streaming-only). Voice list at docs.cloud.google.com/
+// text-to-speech/docs/list-voices-and-types (~30 Chirp3-HD options).
+//
+// Switched Iapetus (male) -> Achernar (2026-09-02, user request, trying it
+// for one day's real run to hear how it sounds) - was the user's original
+// choice after listening to several options; revert to Iapetus if Achernar
+// doesn't hold up on a real Daily Alert.
+const DEFAULT_VOICE = { languageCode: "en-US", name: "en-US-Chirp3-HD-Achernar" };
 
 // Extra pause at real paragraph breaks (user request) - not achievable via
 // any plain-text trick (extra spaces/newlines aren't a documented or
