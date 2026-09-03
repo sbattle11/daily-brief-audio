@@ -14,10 +14,14 @@ const ENDPOINT = "https://texttospeech.googleapis.com/v1/text:synthesize";
 // text-to-speech/docs/list-voices-and-types (~30 Chirp3-HD options).
 //
 // Switched Iapetus (male) -> Achernar (2026-09-02, user request, trying it
-// for one day's real run to hear how it sounds) - was the user's original
-// choice after listening to several options; revert to Iapetus if Achernar
-// doesn't hold up on a real Daily Alert.
-const DEFAULT_VOICE = { languageCode: "en-US", name: "en-US-Chirp3-HD-Achernar" };
+// for one day's real run) - was the user's original choice after listening
+// to several options. Achernar's real 2026-09-03 run confirmed a clear
+// improvement over Iapetus - noted, kept as the new baseline to beat.
+//
+// Achernar -> Aoede (2026-09-03, user request) - trying a second candidate
+// for the 2026-09-04 run, same one-day-trial approach. Revert to Achernar
+// (the confirmed-better baseline, not Iapetus) if Aoede doesn't hold up.
+const DEFAULT_VOICE = { languageCode: "en-US", name: "en-US-Chirp3-HD-Aoede" };
 
 // Extra pause at real paragraph breaks (user request) - not achievable via
 // any plain-text trick (extra spaces/newlines aren't a documented or
