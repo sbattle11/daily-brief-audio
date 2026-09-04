@@ -18,10 +18,14 @@ const ENDPOINT = "https://texttospeech.googleapis.com/v1/text:synthesize";
 // to several options. Achernar's real 2026-09-03 run confirmed a clear
 // improvement over Iapetus - noted, kept as the new baseline to beat.
 //
-// Achernar -> Aoede (2026-09-03, user request) - trying a second candidate
-// for the 2026-09-04 run, same one-day-trial approach. Revert to Achernar
-// (the confirmed-better baseline, not Iapetus) if Aoede doesn't hold up.
-const DEFAULT_VOICE = { languageCode: "en-US", name: "en-US-Chirp3-HD-Aoede" };
+// Achernar -> Aoede (2026-09-03, user request) - never actually run; user
+// changed their mind before the trial happened and asked to try Alnilam
+// instead.
+//
+// Aoede -> Alnilam (2026-09-03, user request) - trying this candidate for
+// the 2026-09-04 run, same one-day-trial approach. Revert to Achernar
+// (the confirmed-better baseline, not Iapetus) if Alnilam doesn't hold up.
+const DEFAULT_VOICE = { languageCode: "en-US", name: "en-US-Chirp3-HD-Alnilam" };
 
 // Extra pause at real paragraph breaks (user request) - not achievable via
 // any plain-text trick (extra spaces/newlines aren't a documented or
