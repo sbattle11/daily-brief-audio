@@ -22,13 +22,16 @@ name: Daily Brief Audio
 # ET) - purely to skip pointless early no-op ticks, not a reliability
 # change.
 on:
-  # RESUMED 2026-08-31 - was paused 2026-08-30 pending a Google Cloud
-  # billing/quota review ("your account will be suspended" notification);
-  # user resolved the underlying Google Cloud account issue and asked to
-  # turn scheduled runs back on, effective starting tomorrow's target
-  # window (today's post was deliberately not backfilled/re-run).
-  schedule:
-    - cron: "*/15 * * * *"
+  # PAUSED 2026-09-04 - user has done enough voice/feature testing for now
+  # (latest: Achernar -> Aoede (never run) -> Alnilam, plus a one-off
+  # Autonoe sample) and asked to hold this project until the new eir theme
+  # actually goes live, rather than keep running/tuning it in the
+  # meantime. Same pause mechanism as the 2026-08-30 GCloud-quota pause
+  # (see git history) - schedule commented out, workflow_dispatch left in
+  # place so a manual run is still possible if ever needed before then.
+  # Un-comment the schedule block below to resume.
+  # schedule:
+  #   - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       force_run:
