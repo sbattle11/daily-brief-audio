@@ -22,16 +22,11 @@ name: Daily Brief Audio
 # ET) - purely to skip pointless early no-op ticks, not a reliability
 # change.
 on:
-  # PAUSED 2026-09-04 - user has done enough voice/feature testing for now
-  # (latest: Achernar -> Aoede (never run) -> Alnilam, plus a one-off
-  # Autonoe sample) and asked to hold this project until the new eir theme
-  # actually goes live, rather than keep running/tuning it in the
-  # meantime. Same pause mechanism as the 2026-08-30 GCloud-quota pause
-  # (see git history) - schedule commented out, workflow_dispatch left in
-  # place so a manual run is still possible if ever needed before then.
-  # Un-comment the schedule block below to resume.
-  # schedule:
-  #   - cron: "*/15 * * * *"
+  # RESUMED 2026-09-08 - back on ahead of eir's actual go-live, to test the
+  # Alnilam voice end-to-end (see project notes: paused 2026-09-04 after
+  # voice testing settled on Alnilam, held pending this resumption).
+  schedule:
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       force_run:
