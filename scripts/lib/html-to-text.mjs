@@ -107,6 +107,23 @@ export function splitIntoArticles(html) {
 // on position instead of wording is deliberately more robust against real
 // byline variation (single vs. multiple authors, "(EIRNS)" present or not,
 // date formatting) than trying to recognize the phrase itself would be.
+// REAL BUG, caught by the user listening (2026-09-08): removing the byline
+// paragraph outright also silently removed the only real pause between a
+// supporting article's headline and its body text - markHeadlineByline
+// already gives every headline (lead and supporting alike) a real trailing
+// period, but a bare sentence period gets NO programmed pause at all in
+// this pipeline; the only actual pause mechanism is PARA_BREAK_MARKER (a
+// real 750ms SSML <break>, see tts.mjs), and that marker was only ever
+// produced by the BYLINE paragraph's own closing </p> - never by anything
+// tied to the headline itself. With the byline gone, nothing but a bare
+// period separated title from body, which read as the title running
+// straight into the first body sentence. Fix: replace the byline
+// paragraph with a real PARA_BREAK_MARKER instead of deleting it outright -
+// keeps the original pause timing (title. <750ms break> body...) without
+// bringing the spoken "by {author} — {date}" text back. Inserted as plain
+// text (not wrapped in a tag) so it passes through markHeadlineByline/
+// markEmphasis/ensureParagraphPunctuation untouched and survives to the
+// final plain-text output exactly like every other PARA_BREAK_MARKER does.
 export function stripByline(articleHtml) {
     const headlineClose = articleHtml.match(/<\/h[23]>/i);
     if (!headlineClose) return articleHtml; // no real headline found - leave as-is, nothing safe to strip
@@ -115,7 +132,7 @@ export function stripByline(articleHtml) {
     if (!bylineMatch) return articleHtml; // no immediately-following <p> - nothing to strip
     const bylineStart = afterHeadline + bylineMatch.index;
     const bylineEnd = bylineStart + bylineMatch[0].length;
-    return articleHtml.slice(0, bylineStart) + articleHtml.slice(bylineEnd);
+    return articleHtml.slice(0, bylineStart) + ` ${PARA_BREAK_MARKER} ` + articleHtml.slice(bylineEnd);
 }
 
 // Converts ONE already-split article's HTML fragment (see splitIntoArticles
