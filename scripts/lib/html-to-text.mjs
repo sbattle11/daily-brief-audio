@@ -194,6 +194,35 @@ export function articleHtmlToPlainText(articleHtml) {
         // phrase itself (e.g. ‘the people’s voice’ keeps its own
         // apostrophe - only the outer wrapping marks are removed).
         .replace(/‘([^‘’]*)’/g, "$1")
+        // Straight-quote scare-quote phrases (user-flagged, 2026-09-08):
+        // editorial content sometimes mixes straight quotes into an
+        // otherwise-curly-quoted post (copy-pasted from a source that uses
+        // straight quotes, or typed without smart-quote autocorrect) - same
+        // unwanted-emphasis problem as the curly single-quote case above.
+        // Straight quotes can't use that same trick, though: curly ‘ vs ’
+        // at least LOOK different, so the code above can safely anchor on
+        // ‘ alone (never an apostrophe); straight ' serves as opening
+        // quote, closing quote, AND apostrophe/possessive with zero visual
+        // distinction between them. Anchor on POSITION instead: a real
+        // opening quote is never immediately preceded by a letter/digit (a
+        // contraction/possessive apostrophe always is - "don't"/
+        // "LaRouche's" both have a letter right before the mark), and a
+        // real closing quote is never immediately followed by one (a
+        // possessive "'s" always is). Contractions/possessives are left
+        // completely untouched by this - confirmed by construction, not
+        // just by testing: the lookbehind/lookahead conditions are what
+        // make a position count as an opening/closing mark at all, so a
+        // mid-word apostrophe never qualifies as either in the first place.
+        // Quoted content is barred from containing another straight quote
+        // OR a "[" - the latter stops a match from spanning across a
+        // [[PARABREAK]]/other bracket marker, capping the damage from the
+        // one real known false-positive case this heuristic can't avoid: a
+        // straight-quoted decade ("the '80s") looks identical to a real
+        // opening quote with nothing to close it - without the "["
+        // exclusion, that stray opening mark could wrongly pair with some
+        // unrelated later closing-shaped mark arbitrarily far into the
+        // rest of the article instead of just failing to match at all.
+        .replace(/(?<![A-Za-z0-9])'([^'[\s][^'[]*?)'(?![A-Za-z0-9])/g, "$1")
         .replace(/&nbsp;/g, " ")
         .replace(/&amp;/g, "&")
         .replace(/&[a-z#0-9]+;/gi, " ")
