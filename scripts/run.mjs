@@ -31,7 +31,7 @@ import { synthesizeWithRetry } from "./lib/tts.mjs";
 import { stitchAudio } from "./lib/stitch.mjs";
 import { loadManifest, saveManifest, loadState, saveState } from "./lib/manifest.mjs";
 import { loadChapters, saveChapters } from "./lib/chapters.mjs";
-import { splitIntoArticles, articleHtmlToPlainText, stripByline, LEAD_IN_MARKER } from "./lib/html-to-text.mjs";
+import { splitIntoArticles, articleHtmlToPlainText, stripByline, LEAD_IN_MARKER, PARA_BREAK_MARKER } from "./lib/html-to-text.mjs";
 import { getAudioDuration } from "./lib/audio-duration.mjs";
 
 // Fixed sound assets (added 2026-08-29, user request) - both pre-converted
@@ -149,6 +149,22 @@ export async function processPost(post, manifest, chapters, state, tmpDir) {
         const withoutByline = i === 0 ? articles[i] : stripByline(articles[i]);
         await synthesizeToFiles(articleHtmlToPlainText(withoutByline));
     }
+
+    // Spoken sign-off (user request, 2026-09-08), between the last article's
+    // own audio and the outro sound effect. PARA_BREAK_MARKER prefixed the
+    // same way LEAD_IN_MARKER prefixes the intro line above - it's a plain
+    // JS string synthesized as its own separate request/audio file (not run
+    // through articleHtmlToPlainText, same as the intro), so the marker has
+    // to supply its own pause the same way: it becomes a real 750ms SSML
+    // <break> at the very START of THIS clip (see toSsml() in tts.mjs), and
+    // since stitchAudio() below just concatenates finished audio files back
+    // to back with no gap of its own, that leading silence is what actually
+    // creates "a pause after the last article, before this line" once
+    // spliced in - not something a break at the END of the last article's
+    // own clip could do (that clip is already finished synthesizing by the
+    // time this one starts). No trailing pause needed before the outro
+    // sound - it follows immediately, per the user's own request.
+    await synthesizeToFiles(`${PARA_BREAK_MARKER} Thank you for listening to today's EIR Daily Alert.`);
 
     await addPath(OUTRO_SOUND_PATH);
 
