@@ -377,7 +377,23 @@ function ensureParagraphPunctuation(html) {
 // are excluded outright rather than continuing to chase an SSML treatment
 // for them.
 const ARTICLES = new Set(["the", "a", "an"]);
+
+// DISABLED 2026-09-26 (user decision): every SSML treatment tried for an
+// italic word - <prosody rate> at several values and span widths,
+// <emphasis>, an ALL-CAPS text trick - either made Chirp3-HD insert an
+// unnatural pause before the word or simply sounded no better than plain
+// text (the tag itself, even at rate="100%", added pauses; see the 9/26
+// measurements in memory). So italic words are now narrated as plain text.
+// Flip this back to true to restore the old behavior; tts.mjs's
+// EMPHASIS_START/END handling is left in place and simply never triggers.
+const EMPHASIS_ENABLED = false;
+
 function markEmphasis(html) {
+    // Unwrap (not space-replace): the generic tag-stripper turns every tag
+    // into a space, which would leave "decision ." with a stray space
+    // before the period. Removing just the em tags keeps the word flush
+    // against its punctuation, exactly as the emphasis markers used to.
+    if (!EMPHASIS_ENABLED) return html.replace(/<\/?em>/gi, "");
     return html.replace(/<em>([^<]*)<\/em>/gi, (match, inner) => {
         const trimmed = inner.trim();
         const isSingleWord = trimmed.length > 0 && !/\s/.test(trimmed);
