@@ -207,7 +207,14 @@ async function main() {
     // (the manifest/state files themselves), so a stateless window that's
     // self-healing on a missed run beats tracking a separate watermark.
     const since = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-    const posts = browsePosts({ filter: `tag:daily-brief+published_at:>'${since}'`, formats: "html", order: "published_at ASC" });
+    // status:published (added 2026-09-29, real incident) - the Admin API
+    // key this script uses can see every status, and without this filter
+    // it happily returns a draft too. The 4:45am-8am ET target window
+    // above only gates WHEN this script bothers to run at all - it says
+    // nothing about a given post's own status, and a Daily Alert drafted
+    // ahead of the next morning's edition got auto-narrated the moment a
+    // catch-up run found it, hours before anyone meant to publish it.
+    const posts = browsePosts({ filter: `tag:daily-brief+status:published+published_at:>'${since}'`, formats: "html", order: "published_at ASC" });
 
     const toProcess = [];
     for await (const post of posts) {
