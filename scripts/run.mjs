@@ -1,26 +1,45 @@
 // Daily entry point. Run on a cron firing every 15 minutes, all day (not
-// scoped to any particular UTC hour range) and self-gates on local time -
-// see isTargetWindow() below - so "Eastern time, pinned year-round"
-// survives the DST transition automatically with zero maintenance, instead
-// of drifting an hour twice a year like a fixed-UTC cron window would.
+// scoped to any particular UTC hour range) - see main() for why there is
+// no time-of-day gate on the actual work anymore (there used to be one;
+// removed 2026-09-30, see that date's note below).
 //
-// Target window is 4:45am-8am ET. Originally just a single hour (4am ET),
-// then widened to 4am-8am ET 2026-08-24 after that single-hour window got
-// silently skipped two mornings in a row (2026-08-23, 2026-08-24) - and
-// even with that wider window and an hourly cron, the same silent-skip
-// pattern recurred again on 2026-08-27 and 2026-08-28 (confirmed via the
-// GitHub Actions API: zero runs attempted in the gap, not failed ones, and
-// the workflow's own state/concurrency/quota were all checked and ruled
-// out as a cause - this is GitHub's own scheduler dropping ticks, not
-// something wrong in this repo). Fix this time: the cron itself now fires
-// every 15 minutes all day (see the workflow YAML) instead of once an
-// hour, so a dropped tick has 15-minute-wide neighbors to fall back on
-// instead of hour-wide ones. The lower bound was moved from 4:00am to
-// 4:45am (Daily Briefs actually publish around 4:40-4:41am ET, confirmed
-// against real posts - no need to check before that) purely to skip
-// pointless early no-op ticks; it does not affect reliability either way,
-// since a run that finds nothing new just exits (the manifest already
-// makes reprocessing idempotent).
+// History of the time-window gate, kept for context since the same root
+// cause kept recurring: originally a single hour (4am ET), widened to
+// 4am-8am ET 2026-08-24 after that single-hour window got silently
+// skipped two mornings running (2026-08-23, 2026-08-24); the same
+// silent-skip pattern recurred AGAIN on 2026-08-27/08-28 even with the
+// wider window and an hourly cron (confirmed via the GitHub Actions API:
+// zero runs attempted in the gap, not failed ones - this is GitHub's own
+// scheduler dropping ticks, not this repo's workflow/state/concurrency/
+// quota, all of which were checked and ruled out). Fixed at the time by
+// moving the cron to fire every 15 minutes all day instead of once an
+// hour (see the workflow YAML), reasoning that a dropped tick would then
+// have 15-minute-wide neighbors to fall back on instead of hour-wide
+// ones - and the window itself was narrowed slightly further, to
+// 4:45am-8am ET, purely to skip pointless early no-op ticks (Daily
+// Briefs publish around 4:40-4:41am ET).
+//
+// 2026-09-30: that 15-minute cron STILL wasn't landing reliably inside
+// even the widened 3h15m window - confirmed via the Actions API that
+// real ticks were firing roughly every 5-6 HOURS apart on some days
+// (2026-09-27, again on 2026-09-30), not every 15 minutes as configured,
+// bracketing the window on both sides without ever landing inside it.
+// Three mornings in a row (2026-09-27 through 2026-09-29) needed either
+// a lucky later tick to catch up via the 48h rolling lookback below, or
+// a manual run, before the user raised the pattern directly. Rather than
+// keep narrowing/widening a window against a scheduler this repo doesn't
+// control, the window is REMOVED entirely - every tick that actually
+// fires now does real work immediately, at whatever hour that happens to
+// be. This is safe for two independent reasons: (1) the window was only
+// ever a "skip pointless early ticks" optimization, never a correctness
+// requirement - the per-post idempotency check in main() (keyed on
+// published_at, not just a timestamp window) already makes a no-op run
+// cheap and harmless at any hour; (2) this is a public repo, so GitHub
+// Actions minutes are free - running ~96 times/day instead of ~13 costs
+// nothing. A Daily Brief narrated a few hours later than its usual
+// ~4:40am ET publish time (on whatever tick actually fires first) is a
+// minor, rare inconvenience; a day with no audio at all, which is what
+// the window was actually causing, is not.
 import "dotenv/config";
 import { writeFileSync, mkdtempSync, rmSync } from "fs";
 import path from "path";
@@ -56,22 +75,6 @@ function formatIntroDate(publishedAtIso) {
         day: "numeric",
         year: "numeric",
     }).format(new Date(publishedAtIso));
-}
-
-const TARGET_START_MINUTES_ET = 4 * 60 + 45; // 4:45am
-const TARGET_END_MINUTES_ET = 8 * 60; // exclusive - so the window is 4:45am-7:59am ET
-
-function isTargetWindow() {
-    const parts = new Intl.DateTimeFormat("en-US", {
-        timeZone: "America/New_York",
-        hour: "numeric",
-        minute: "numeric",
-        hour12: false,
-    }).formatToParts(new Date());
-    const hour = Number(parts.find((p) => p.type === "hour").value);
-    const minute = Number(parts.find((p) => p.type === "minute").value);
-    const minutesInNY = hour * 60 + minute;
-    return minutesInNY >= TARGET_START_MINUTES_ET && minutesInNY < TARGET_END_MINUTES_ET;
 }
 
 export async function processPost(post, manifest, chapters, state, tmpDir) {
@@ -192,11 +195,6 @@ export async function processPost(post, manifest, chapters, state, tmpDir) {
 }
 
 async function main() {
-    if (!isTargetWindow() && process.env.FORCE_RUN !== "1") {
-        console.log(`Outside the target window (4:45am-8:00am America/New_York) - exiting. Set FORCE_RUN=1 to override for testing.`);
-        return;
-    }
-
     const manifest = loadManifest();
     const chapters = loadChapters();
     const state = loadState();
@@ -209,11 +207,9 @@ async function main() {
     const since = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
     // status:published (added 2026-09-29, real incident) - the Admin API
     // key this script uses can see every status, and without this filter
-    // it happily returns a draft too. The 4:45am-8am ET target window
-    // above only gates WHEN this script bothers to run at all - it says
-    // nothing about a given post's own status, and a Daily Alert drafted
-    // ahead of the next morning's edition got auto-narrated the moment a
-    // catch-up run found it, hours before anyone meant to publish it.
+    // it happily returns a draft too. A Daily Alert drafted ahead of the
+    // next morning's edition got auto-narrated the moment a catch-up run
+    // found it, hours before anyone meant to publish it.
     const posts = browsePosts({ filter: `tag:daily-brief+status:published+published_at:>'${since}'`, formats: "html", order: "published_at ASC" });
 
     const toProcess = [];
